@@ -1,0 +1,5 @@
+# 텍스트는 저장소에서 LF 로 정규화 (Windows CRLF 경고 제거)
+* text=auto eol=lf
+
+# 바이너리/픽스처는 그대로
+*.parquet binary
