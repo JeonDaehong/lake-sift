@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from rich.console import Console
+from rich.markup import escape
 
 from lakesift.result import DiffResult
 
@@ -31,15 +32,17 @@ def render_human(
         console.print("[green]= 차이 없음[/green]")
         return
 
-    # 스키마 델타
+    # 스키마 델타 (컬럼명/타입은 rich 마크업으로 오해되지 않도록 escape)
     for c in result.schema_changes:
+        col = escape(c.column)
         if c.kind == "added":
-            console.print(f"[green]+ 컬럼[/green] {c.column} ({c.new_type})")
+            console.print(f"[green]+ 컬럼[/green] {col} ({escape(str(c.new_type))})")
         elif c.kind == "removed":
-            console.print(f"[red]- 컬럼[/red] {c.column} ({c.old_type})")
+            console.print(f"[red]- 컬럼[/red] {col} ({escape(str(c.old_type))})")
         else:
             console.print(
-                f"[yellow]~ 컬럼[/yellow] {c.column}: {c.old_type} → {c.new_type}"
+                f"[yellow]~ 컬럼[/yellow] {col}: "
+                f"{escape(str(c.old_type))} → {escape(str(c.new_type))}"
             )
 
     s = result.summary()
@@ -58,7 +61,7 @@ def render_human(
             if i >= max_rows:
                 console.print(f"  [dim]... 외 {len(items) - max_rows}건[/dim]")
                 break
-            console.print(f"[{style}]{prefix}[/{style}] {render(it)}")
+            console.print(f"[{style}]{prefix}[/{style}] {escape(render(it))}")
 
     _emit(result.removed, _fmt_row, "-", "red")
     _emit(result.added, _fmt_row, "+", "green")
