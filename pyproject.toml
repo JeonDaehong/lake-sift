@@ -25,7 +25,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+iceberg = ["pyiceberg>=0.7"]
+dev = ["pytest>=8", "pyiceberg[sql-sqlite]>=0.7"]
 
 [project.scripts]
 lake-sift = "lakesift.cli:app"
