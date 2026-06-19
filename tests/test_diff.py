@@ -33,16 +33,16 @@ def test_identical_is_empty(tmp_path):
 def test_added_removed_changed(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1, 2, 3], "v": ["a", "b", "c"]})
     b = _write(tmp_path / "b.parquet", {"id": [2, 3, 4], "v": ["b", "C", "d"]})
-    result = diff(ParquetSource(a), ParquetSource(b), key=["id"])
-
-    assert [r["id"] for r in result.removed] == [1]      # left only
-    assert [r["id"] for r in result.added] == [4]        # right only
-    assert result.changed_rows == 1                       # id=3 의 v: c→C
-    assert len(result.changed_cells) == 1
-    cc = result.changed_cells[0]
-    assert cc.key == {"id": 3} and cc.column == "v"
-    assert cc.old == "c" and cc.new == "C"
-    assert not result.is_empty()
+    with diff(ParquetSource(a), ParquetSource(b), key=["id"]) as result:
+        assert [r["id"] for r in result.removed] == [1]      # left only
+        assert [r["id"] for r in result.added] == [4]        # right only
+        assert result.changed_rows == 1                       # id=3 의 v: c→C
+        cells = list(result.changed_cells)
+        assert len(cells) == 1
+        cc = cells[0]
+        assert cc.key == {"id": 3} and cc.column == "v"
+        assert cc.old == "c" and cc.new == "C"
+        assert not result.is_empty()
 
 
 def test_null_equals_null(tmp_path):
@@ -55,9 +55,9 @@ def test_null_equals_null(tmp_path):
 def test_composite_key(tmp_path):
     a = _write(tmp_path / "a.parquet", {"o": [1, 1], "l": [1, 2], "v": ["a", "b"]})
     b = _write(tmp_path / "b.parquet", {"o": [1, 1], "l": [1, 2], "v": ["a", "B"]})
-    result = diff(ParquetSource(a), ParquetSource(b), key=["o", "l"])
-    assert result.changed_rows == 1
-    assert result.changed_cells[0].key == {"o": 1, "l": 2}
+    with diff(ParquetSource(a), ParquetSource(b), key=["o", "l"]) as result:
+        assert result.changed_rows == 1
+        assert next(result.changed_cells).key == {"o": 1, "l": 2}
 
 
 def test_exclude_column(tmp_path):

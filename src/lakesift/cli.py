@@ -5,6 +5,7 @@ exit code 규약: 0 = 동일, 1 = 차이 있음, 2 = 에러(비교 불가).
 
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
 import typer
@@ -12,7 +13,6 @@ from rich.console import Console
 
 from lakesift.core import DiffError, diff
 from lakesift.render.human import render_human
-from lakesift.render.json_render import render_json
 from lakesift.sources.parquet import ParquetSource
 
 app = typer.Typer(add_completion=False, help="두 Parquet 파일을 셀 단위로 diff 한다.")
@@ -59,12 +59,17 @@ def main(
         err.print(f"[red]에러:[/red] {e}")
         raise typer.Exit(code=2)
 
-    if json_out:
-        console.print_json(render_json(result))
-    else:
-        render_human(result, console=console, summary_only=summary)
+    # result 는 살아있는 커넥션을 소유한다 — with 로 확실히 닫는다.
+    with result:
+        if json_out:
+            # 행/셀을 한 건씩 흘려쓴다 (rich 버퍼링/색 입히기 우회).
+            result.write_json(sys.stdout)
+            sys.stdout.write("\n")
+        else:
+            render_human(result, console=console, summary_only=summary)
+        empty = result.is_empty()
 
-    raise typer.Exit(code=0 if result.is_empty() else 1)
+    raise typer.Exit(code=0 if empty else 1)
 
 
 if __name__ == "__main__":  # pragma: no cover

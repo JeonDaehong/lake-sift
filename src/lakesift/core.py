@@ -3,11 +3,15 @@
 Python 은 SQL 을 생성/오케스트레이션만 하고, 무거운 비교는 전부 DuckDB 에 위임한다.
 NULL 동등 비교(`NULL == NULL` 을 같음으로) 는 SQL 의 `IS [NOT] DISTINCT FROM` 으로 처리.
 float 는 v0 에서 정확 일치(exact) 비교 — 수치 tolerance 는 v0.2.
+
+메모리: 행/셀 델타는 파이썬 list 로 전량 적재하지 않는다. 카운트는 집계 쿼리로 먼저
+구하고, 실제 행/셀은 `DiffResult` 가 접근할 때 DuckDB 커서로 배치 스트리밍한다.
+이 때문에 결과는 살아있는 커넥션을 소유하므로 컨텍스트 매니저로 쓰는 게 안전하다.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 import duckdb
 
@@ -15,6 +19,9 @@ from lakesift.result import CellChange, DiffResult, SchemaChange
 
 if TYPE_CHECKING:
     from lakesift.sources.base import Source
+
+# 커서에서 한 번에 끌어오는 행 수. 너무 작으면 왕복 비용, 너무 크면 메모리.
+_BATCH = 2048
 
 
 class DiffError(Exception):
@@ -37,10 +44,50 @@ def _has_duplicate_keys(con, view: str, key: Sequence[str]) -> bool:
     return con.execute(sql).fetchone() is not None
 
 
-def _fetch_dicts(con, sql: str) -> list[dict[str, Any]]:
-    res = con.execute(sql)
-    cols = [d[0] for d in res.description]
-    return [dict(zip(cols, row)) for row in res.fetchall()]
+def _stream_dicts(con, sql: str):
+    """sql 결과를 행당 dict 로 흘려주는 generator factory (접근마다 fresh 커서)."""
+
+    def factory() -> Iterator[dict[str, Any]]:
+        cur = con.cursor()
+        cur.execute(sql)
+        cols = [d[0] for d in cur.description]
+        while True:
+            rows = cur.fetchmany(_BATCH)
+            if not rows:
+                break
+            for row in rows:
+                yield dict(zip(cols, row))
+
+    return factory
+
+
+def _stream_cells(con, key: list[str], compare_cols: list[str], key_join: str):
+    """변경 셀을 컬럼별 커서를 이어가며 흘려주는 generator factory.
+
+    컬럼마다 old/new 타입이 달라 한 쿼리로 합치면 공통 타입으로 강제 변환되어 값이
+    왜곡될 수 있다. 그래서 컬럼별 쿼리를 순차로 스트리밍해 원래 타입을 보존한다.
+    """
+    key_sel = ", ".join(f"l.{_q(k)} AS {_q(k)}" for k in key)
+
+    def factory() -> Iterator[CellChange]:
+        for c in compare_cols:
+            qc = _q(c)
+            sql = (
+                f"SELECT {key_sel}, l.{qc} AS old_val, r.{qc} AS new_val "
+                f"FROM l JOIN r ON {key_join} "
+                f"WHERE l.{qc} IS DISTINCT FROM r.{qc}"
+            )
+            cur = con.cursor()
+            cur.execute(sql)
+            while True:
+                rows = cur.fetchmany(_BATCH)
+                if not rows:
+                    break
+                for row in rows:
+                    keyvals = {k: row[i] for i, k in enumerate(key)}
+                    yield CellChange(key=keyvals, column=c, old=row[-2], new=row[-1])
+
+    return factory
 
 
 def diff(
@@ -54,6 +101,10 @@ def diff(
 ) -> DiffResult:
     """left 와 right 를 key 기준으로 셀 단위 비교한다.
 
+    반환된 `DiffResult` 는 살아있는 DuckDB 커넥션을 소유한다. 행/셀을 끝까지
+    스트리밍하므로 `with diff(...) as result:` 로 쓰거나 `result.close()` 를 호출해
+    커넥션을 닫아라.
+
     Raises:
         DiffError: key 누락/부재, 중복 key(allow_duplicates=False) 등 비교 불가 상황.
     """
@@ -65,7 +116,7 @@ def diff(
     exclude_set = set(exclude or [])
     columns_filter = set(columns) if columns else None
 
-    con = duckdb.connect()  # in-memory
+    con = duckdb.connect()  # in-memory; 성공 시 DiffResult 가 소유권을 넘겨받는다.
     try:
         lrel = left.to_relation(con)
         rrel = right.to_relation(con)
@@ -112,42 +163,48 @@ def diff(
 
         key_join = " AND ".join(f"l.{_q(k)} IS NOT DISTINCT FROM r.{_q(k)}" for k in key)
 
-        # --- 행 델타 (anti join) ---
-        removed = _fetch_dicts(con, f"SELECT l.* FROM l ANTI JOIN r ON {key_join}")
-        added = _fetch_dicts(con, f"SELECT r.* FROM r ANTI JOIN l ON {key_join}")
+        # --- 카운트(집계로 먼저) — 실제 행/셀은 접근 시 스트리밍한다 ---
+        n_removed = con.execute(
+            f"SELECT count(*) FROM l ANTI JOIN r ON {key_join}"
+        ).fetchone()[0]
+        n_added = con.execute(
+            f"SELECT count(*) FROM r ANTI JOIN l ON {key_join}"
+        ).fetchone()[0]
 
-        # --- 셀 델타 + 변경 행 수 ---
-        changed_cells: list[CellChange] = []
         changed_rows = 0
+        n_changed_cells = 0
         if compare_cols:
-            key_sel = ", ".join(f"l.{_q(k)} AS {_q(k)}" for k in key)
-            for c in compare_cols:
-                qc = _q(c)
-                rows = con.execute(
-                    f"SELECT {key_sel}, l.{qc} AS old_val, r.{qc} AS new_val "
-                    f"FROM l JOIN r ON {key_join} "
-                    f"WHERE l.{qc} IS DISTINCT FROM r.{qc}"
-                ).fetchall()
-                for row in rows:
-                    keyvals = {k: row[i] for i, k in enumerate(key)}
-                    changed_cells.append(
-                        CellChange(key=keyvals, column=c, old=row[-2], new=row[-1])
-                    )
-
             any_diff = " OR ".join(
                 f"l.{_q(c)} IS DISTINCT FROM r.{_q(c)}" for c in compare_cols
             )
-            changed_rows = con.execute(
-                f"SELECT count(*) FROM l JOIN r ON {key_join} WHERE {any_diff}"
-            ).fetchone()[0]
+            cell_sum = " + ".join(
+                f"(l.{_q(c)} IS DISTINCT FROM r.{_q(c)})::INT" for c in compare_cols
+            )
+            row = con.execute(
+                f"SELECT count(*) FILTER (WHERE {any_diff}) AS cr, "
+                f"COALESCE(sum({cell_sum}), 0) AS cc "
+                f"FROM l JOIN r ON {key_join}"
+            ).fetchone()
+            changed_rows, n_changed_cells = int(row[0]), int(row[1])
+
+        removed_sql = f"SELECT l.* FROM l ANTI JOIN r ON {key_join}"
+        added_sql = f"SELECT r.* FROM r ANTI JOIN l ON {key_join}"
 
         return DiffResult(
             key=key,
             schema_changes=schema_changes,
-            added=added,
-            removed=removed,
-            changed_cells=changed_cells,
+            added=_stream_dicts(con, added_sql),
+            removed=_stream_dicts(con, removed_sql),
+            changed_cells=_stream_cells(con, key, compare_cols, key_join),
             changed_rows=changed_rows,
+            counts={
+                "added": int(n_added),
+                "removed": int(n_removed),
+                "changed_cells": n_changed_cells,
+            },
+            resource=con,
         )
-    finally:
+    except BaseException:
+        # 결과 반환 전 실패 → 커넥션은 우리가 닫는다 (성공 경로에선 DiffResult 소유).
         con.close()
+        raise

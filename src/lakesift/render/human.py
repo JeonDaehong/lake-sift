@@ -56,17 +56,21 @@ def render_human(
     if summary_only:
         return
 
-    def _emit(items, render, prefix, style):
-        for i, it in enumerate(items):
-            if i >= max_rows:
-                console.print(f"  [dim]... 외 {len(items) - max_rows}건[/dim]")
+    def _emit(items, total, render, prefix, style):
+        # items 는 스트리밍 이터레이터일 수 있다 — 전량 적재하지 말고 max_rows 까지만.
+        shown = 0
+        for it in items:
+            if shown >= max_rows:
+                console.print(f"  [dim]... 외 {total - max_rows}건[/dim]")
                 break
             console.print(f"[{style}]{prefix}[/{style}] {escape(render(it))}")
+            shown += 1
 
-    _emit(result.removed, _fmt_row, "-", "red")
-    _emit(result.added, _fmt_row, "+", "green")
+    _emit(result.removed, s["removed"], _fmt_row, "-", "red")
+    _emit(result.added, s["added"], _fmt_row, "+", "green")
     _emit(
         result.changed_cells,
+        s["changed_cells"],
         lambda c: f"[{_fmt_key(c.key)}] {c.column}: {c.old!r} → {c.new!r}",
         "~",
         "yellow",
