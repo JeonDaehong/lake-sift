@@ -85,6 +85,16 @@ def test_duplicate_key_errors(tmp_path):
         diff(ParquetSource(a), ParquetSource(b), key=["id"])
 
 
+def test_changed_by_column_ranking(tmp_path):
+    # a 컬럼은 3건, b 컬럼은 1건 변경 → 내림차순 [a, b]
+    a = _write(tmp_path / "a.parquet", {"id": [1, 2, 3], "a": ["x", "x", "x"], "b": ["p", "q", "r"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1, 2, 3], "a": ["X", "Y", "Z"], "b": ["p", "q", "R"]})
+    with diff(ParquetSource(a), ParquetSource(b), key=["id"]) as r:
+        assert r.changed_by_column == [("a", 3), ("b", 1)]
+        # 안 바뀐 컬럼은 빠지고, 총합은 changed_cells 와 일치
+        assert sum(n for _, n in r.changed_by_column) == r.summary()["changed_cells"]
+
+
 def test_tolerance_numeric(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1, 2], "v": [1.00, 5.0]})
     b = _write(tmp_path / "b.parquet", {"id": [1, 2], "v": [1.05, 9.0]})

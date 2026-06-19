@@ -43,6 +43,9 @@ def main(
     sample: Optional[int] = typer.Option(
         None, "--sample", "-n", help="사람용 출력에서 종류별 표시할 최대 건수"
     ),
+    top: int = typer.Option(
+        5, "--top", help="변경 셀 상위 컬럼 K개 표시 (0=끄기)"
+    ),
 ) -> None:
     console = Console()
     err = Console(stderr=True)
@@ -78,7 +81,9 @@ def main(
             sys.stdout.write("\n")
         else:
             kw = {} if sample is None else {"max_rows": sample}
-            render_human(result, console=console, summary_only=summary, **kw)
+            render_human(
+                result, console=console, summary_only=summary, top_columns=top, **kw
+            )
         empty = result.is_empty()
 
     raise typer.Exit(code=0 if empty else 1)

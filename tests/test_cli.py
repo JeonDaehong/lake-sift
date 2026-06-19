@@ -87,6 +87,16 @@ def test_sample_limits_human_output(tmp_path):
     assert "외 2건" in r.stdout  # 3개 중 1개만 보이고 나머지 절단
 
 
+def test_top_columns_shown_and_toggle(tmp_path):
+    a = _write(tmp_path / "a.parquet", {"id": [1, 2], "a": ["x", "x"], "b": ["p", "q"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1, 2], "a": ["X", "Y"], "b": ["p", "q"]})
+    r = runner.invoke(app, [a, b, "-k", "id"])
+    assert "상위 컬럼" in r.stdout and "a (2)" in r.stdout
+    # --top 0 으로 끄면 안 보임
+    r0 = runner.invoke(app, [a, b, "-k", "id", "--top", "0"])
+    assert "상위 컬럼" not in r0.stdout
+
+
 def test_columns_filter(tmp_path):
     # b 만 바뀌는데 --columns a 로 a 만 비교 → 동일 취급(exit 0)
     a = _write(tmp_path / "a.parquet", {"id": [1], "a": ["x"], "b": ["p"]})

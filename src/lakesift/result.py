@@ -69,6 +69,7 @@ class DiffResult:
         changed_cells: _Rows = (),
         changed_rows: int = 0,
         *,
+        changed_by_column: Sequence[tuple[str, int]] | None = None,
         counts: dict[str, int] | None = None,
         resource: Any = None,
     ) -> None:
@@ -78,6 +79,8 @@ class DiffResult:
         self._removed = removed
         self._changed_cells = changed_cells
         self.changed_rows = changed_rows
+        # 변경 셀 수 내림차순 (col, count). 0 건 컬럼은 제외됨.
+        self.changed_by_column: list[tuple[str, int]] = list(changed_by_column or [])
         self._counts = counts or {}
         self._resource = resource  # 소유한 DuckDB 커넥션 (있으면 close 책임짐)
 
@@ -135,6 +138,9 @@ class DiffResult:
                 }
                 for c in self.schema_changes
             ],
+            "changed_by_column": [
+                {"column": col, "count": n} for col, n in self.changed_by_column
+            ],
             "added": list(self.added),
             "removed": list(self.removed),
             "changed_cells": [
@@ -176,6 +182,8 @@ class DiffResult:
                 "new_type": c.new_type,
             },
         )
+        stream.write(',"changed_by_column":')
+        array(self.changed_by_column, lambda t: {"column": t[0], "count": t[1]})
         stream.write(',"added":')
         array(self.added, lambda r: r)
         stream.write(',"removed":')

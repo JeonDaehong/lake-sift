@@ -217,15 +217,26 @@ def diff(
 
         changed_rows = 0
         n_changed_cells = 0
+        changed_by_column: list[tuple[str, int]] = []
         if compare_cols:
             any_diff = " OR ".join(f"({preds[c]})" for c in compare_cols)
-            cell_sum = " + ".join(f"({preds[c]})::INT" for c in compare_cols)
+            # 컬럼별 변경 셀 수를 한 스캔에서 같이 뽑는다(총합은 파이썬에서 합산).
+            per_col = ", ".join(
+                f"COALESCE(sum(({preds[c]})::INT), 0) AS col{i}"
+                for i, c in enumerate(compare_cols)
+            )
             row = con.execute(
-                f"SELECT count(*) FILTER (WHERE {any_diff}) AS cr, "
-                f"COALESCE(sum({cell_sum}), 0) AS cc "
+                f"SELECT count(*) FILTER (WHERE {any_diff}) AS cr, {per_col} "
                 f"FROM l JOIN r ON {key_join}"
             ).fetchone()
-            changed_rows, n_changed_cells = int(row[0]), int(row[1])
+            changed_rows = int(row[0])
+            per_counts = [int(x) for x in row[1:]]
+            n_changed_cells = sum(per_counts)
+            changed_by_column = sorted(
+                ((c, n) for c, n in zip(compare_cols, per_counts) if n > 0),
+                key=lambda t: t[1],
+                reverse=True,
+            )
 
         removed_sql = f"SELECT l.* FROM l ANTI JOIN r ON {key_join}"
         added_sql = f"SELECT r.* FROM r ANTI JOIN l ON {key_join}"
@@ -237,6 +248,7 @@ def diff(
             removed=_stream_dicts(con, removed_sql),
             changed_cells=_stream_cells(con, key, compare_cols, key_join, preds),
             changed_rows=changed_rows,
+            changed_by_column=changed_by_column,
             counts={
                 "added": int(n_added),
                 "removed": int(n_removed),

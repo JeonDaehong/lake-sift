@@ -24,6 +24,7 @@ def render_human(
     *,
     console: Console | None = None,
     max_rows: int = DEFAULT_MAX_ROWS,
+    top_columns: int = 5,
     summary_only: bool = False,
 ) -> None:
     console = console or Console()
@@ -52,6 +53,15 @@ def render_human(
         f"[yellow]~{s['changed']}[/yellow] 변경 행 "
         f"([yellow]{s['changed_cells']}[/yellow] 셀)"
     )
+
+    # 변경 셀이 많은 컬럼 상위 K (어디가 흔들렸는지 한눈에)
+    if top_columns > 0 and result.changed_by_column:
+        top = result.changed_by_column[:top_columns]
+        parts = ", ".join(f"{escape(col)} ({n})" for col, n in top)
+        rest = len(result.changed_by_column) - len(top)
+        if rest > 0:
+            parts += f", [dim]… 외 {rest}개[/dim]"
+        console.print(f"  [dim]변경 셀 상위 컬럼:[/dim] {parts}")
 
     if summary_only:
         return
