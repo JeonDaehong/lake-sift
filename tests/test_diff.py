@@ -85,6 +85,35 @@ def test_duplicate_key_errors(tmp_path):
         diff(ParquetSource(a), ParquetSource(b), key=["id"])
 
 
+def test_tolerance_numeric(tmp_path):
+    a = _write(tmp_path / "a.parquet", {"id": [1, 2], "v": [1.00, 5.0]})
+    b = _write(tmp_path / "b.parquet", {"id": [1, 2], "v": [1.05, 9.0]})
+    # tol 0.1: id=1 (0.05 차) 은 같음, id=2 (4.0 차) 만 변경
+    with diff(ParquetSource(a), ParquetSource(b), key=["id"], tolerance=0.1) as r:
+        assert r.summary()["changed_cells"] == 1
+        assert next(r.changed_cells).key == {"id": 2}
+    # tol 없으면 둘 다 변경
+    with diff(ParquetSource(a), ParquetSource(b), key=["id"]) as r:
+        assert r.summary()["changed_cells"] == 2
+
+
+def test_tolerance_ignores_string_columns(tmp_path):
+    # tolerance 는 수치 컬럼에만 — 문자열은 그대로 정확 비교
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["b"]})
+    with diff(ParquetSource(a), ParquetSource(b), key=["id"], tolerance=10.0) as r:
+        assert r.summary()["changed_cells"] == 1
+
+
+def test_ignore_case(tmp_path):
+    a = _write(tmp_path / "a.parquet", {"id": [1, 2], "v": ["Hello", "x"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1, 2], "v": ["hello", "y"]})
+    with diff(ParquetSource(a), ParquetSource(b), key=["id"], ignore_case=True) as r:
+        # id=1 은 대소문자만 다름 → 같음, id=2 만 변경
+        assert r.summary()["changed_cells"] == 1
+        assert next(r.changed_cells).key == {"id": 2}
+
+
 def test_missing_key_errors(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
     b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})

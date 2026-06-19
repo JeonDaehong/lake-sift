@@ -34,6 +34,15 @@ def main(
     json_out: bool = typer.Option(False, "--json", help="기계용 JSON 출력"),
     summary: bool = typer.Option(False, "--summary", help="요약만 출력"),
     allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="중복 key 허용"),
+    tolerance: Optional[float] = typer.Option(
+        None, "--tolerance", "-t", help="수치 컬럼 허용 오차 (abs(l-r)<=tol 이면 같음)"
+    ),
+    ignore_case: bool = typer.Option(
+        False, "--ignore-case", "-i", help="문자열 컬럼 대소문자 무시 비교"
+    ),
+    sample: Optional[int] = typer.Option(
+        None, "--sample", "-n", help="사람용 출력에서 종류별 표시할 최대 건수"
+    ),
 ) -> None:
     console = Console()
     err = Console(stderr=True)
@@ -51,6 +60,8 @@ def main(
             exclude=_split(exclude),
             columns=_split(columns),
             allow_duplicates=allow_duplicates,
+            tolerance=tolerance,
+            ignore_case=ignore_case,
         )
     except DiffError as e:
         err.print(f"[red]에러:[/red] {e}")
@@ -66,7 +77,8 @@ def main(
             result.write_json(sys.stdout)
             sys.stdout.write("\n")
         else:
-            render_human(result, console=console, summary_only=summary)
+            kw = {} if sample is None else {"max_rows": sample}
+            render_human(result, console=console, summary_only=summary, **kw)
         empty = result.is_empty()
 
     raise typer.Exit(code=0 if empty else 1)

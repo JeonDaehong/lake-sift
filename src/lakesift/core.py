@@ -44,6 +44,42 @@ def _has_duplicate_keys(con, view: str, key: Sequence[str]) -> bool:
     return con.execute(sql).fetchone() is not None
 
 
+# DuckDB 타입 문자열 분류 (대소문자/파라미터 무시).
+_NUMERIC_HINTS = ("INT", "DECIMAL", "NUMERIC", "DOUBLE", "FLOAT", "REAL", "HUGEINT")
+_TEXT_HINTS = ("VARCHAR", "CHAR", "TEXT", "STRING")
+
+
+def _is_numeric(t: str) -> bool:
+    u = t.upper()
+    return any(h in u for h in _NUMERIC_HINTS)
+
+
+def _is_text(t: str) -> bool:
+    u = t.upper()
+    return any(h in u for h in _TEXT_HINTS)
+
+
+def _diff_pred(col: str, ltype: str, *, tolerance: float | None, ignore_case: bool) -> str:
+    """셀이 '다르다'고 볼 때 TRUE 인 SQL 불리언 식.
+
+    기본은 `IS DISTINCT FROM` (NULL==NULL 동일). 옵션:
+    - tolerance: 수치 컬럼은 `abs(l-r) <= tol` 이면 같음으로 본다.
+    - ignore_case: 문자열 컬럼은 대소문자 무시 비교.
+    컬럼 타입(왼쪽 기준)에 맞는 한 가지만 적용된다.
+    """
+    lc, rc = f"l.{_q(col)}", f"r.{_q(col)}"
+    if tolerance is not None and _is_numeric(ltype):
+        tol = repr(float(tolerance))  # float 이므로 인라인해도 인젝션 안전
+        # 다름 = NOT(둘 다 NULL 이거나, 둘 다 non-NULL 이고 tol 이내)
+        return (
+            f"NOT ( ({lc} IS NULL AND {rc} IS NULL) OR "
+            f"({lc} IS NOT NULL AND {rc} IS NOT NULL AND abs({lc} - {rc}) <= {tol}) )"
+        )
+    if ignore_case and _is_text(ltype):
+        return f"lower({lc}) IS DISTINCT FROM lower({rc})"
+    return f"{lc} IS DISTINCT FROM {rc}"
+
+
 def _stream_dicts(con, sql: str):
     """sql 결과를 행당 dict 로 흘려주는 generator factory (접근마다 fresh 커서)."""
 
@@ -61,7 +97,7 @@ def _stream_dicts(con, sql: str):
     return factory
 
 
-def _stream_cells(con, key: list[str], compare_cols: list[str], key_join: str):
+def _stream_cells(con, key: list[str], compare_cols: list[str], key_join: str, preds: dict[str, str]):
     """변경 셀을 컬럼별 커서를 이어가며 흘려주는 generator factory.
 
     컬럼마다 old/new 타입이 달라 한 쿼리로 합치면 공통 타입으로 강제 변환되어 값이
@@ -75,7 +111,7 @@ def _stream_cells(con, key: list[str], compare_cols: list[str], key_join: str):
             sql = (
                 f"SELECT {key_sel}, l.{qc} AS old_val, r.{qc} AS new_val "
                 f"FROM l JOIN r ON {key_join} "
-                f"WHERE l.{qc} IS DISTINCT FROM r.{qc}"
+                f"WHERE {preds[c]}"
             )
             cur = con.cursor()
             cur.execute(sql)
@@ -98,6 +134,8 @@ def diff(
     exclude: Sequence[str] | None = None,
     columns: Sequence[str] | None = None,
     allow_duplicates: bool = False,
+    tolerance: float | None = None,
+    ignore_case: bool = False,
 ) -> DiffResult:
     """left 와 right 를 key 기준으로 셀 단위 비교한다.
 
@@ -163,6 +201,12 @@ def diff(
 
         key_join = " AND ".join(f"l.{_q(k)} IS NOT DISTINCT FROM r.{_q(k)}" for k in key)
 
+        # 셀 비교 술어를 컬럼마다 한 번 만들어 카운트/스트리밍에 공유 (tolerance/ignore_case 반영).
+        preds = {
+            c: _diff_pred(c, lschema[c], tolerance=tolerance, ignore_case=ignore_case)
+            for c in compare_cols
+        }
+
         # --- 카운트(집계로 먼저) — 실제 행/셀은 접근 시 스트리밍한다 ---
         n_removed = con.execute(
             f"SELECT count(*) FROM l ANTI JOIN r ON {key_join}"
@@ -174,12 +218,8 @@ def diff(
         changed_rows = 0
         n_changed_cells = 0
         if compare_cols:
-            any_diff = " OR ".join(
-                f"l.{_q(c)} IS DISTINCT FROM r.{_q(c)}" for c in compare_cols
-            )
-            cell_sum = " + ".join(
-                f"(l.{_q(c)} IS DISTINCT FROM r.{_q(c)})::INT" for c in compare_cols
-            )
+            any_diff = " OR ".join(f"({preds[c]})" for c in compare_cols)
+            cell_sum = " + ".join(f"({preds[c]})::INT" for c in compare_cols)
             row = con.execute(
                 f"SELECT count(*) FILTER (WHERE {any_diff}) AS cr, "
                 f"COALESCE(sum({cell_sum}), 0) AS cc "
@@ -195,7 +235,7 @@ def diff(
             schema_changes=schema_changes,
             added=_stream_dicts(con, added_sql),
             removed=_stream_dicts(con, removed_sql),
-            changed_cells=_stream_cells(con, key, compare_cols, key_join),
+            changed_cells=_stream_cells(con, key, compare_cols, key_join, preds),
             changed_rows=changed_rows,
             counts={
                 "added": int(n_added),

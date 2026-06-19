@@ -63,6 +63,30 @@ def test_json_output_is_valid(tmp_path):
     assert payload["summary"]["removed"] == 1
 
 
+def test_tolerance_flag(tmp_path):
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": [1.00]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": [1.02]})
+    # tol 0.1 이내 → 동일(exit 0)
+    assert runner.invoke(app, [a, b, "-k", "id", "-t", "0.1"]).exit_code == 0
+    # tol 없으면 변경(exit 1)
+    assert runner.invoke(app, [a, b, "-k", "id"]).exit_code == 1
+
+
+def test_ignore_case_flag(tmp_path):
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["A"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})
+    assert runner.invoke(app, [a, b, "-k", "id", "-i"]).exit_code == 0
+    assert runner.invoke(app, [a, b, "-k", "id"]).exit_code == 1
+
+
+def test_sample_limits_human_output(tmp_path):
+    a = _write(tmp_path / "a.parquet", {"id": [1, 2, 3], "v": ["a", "b", "c"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1, 2, 3], "v": ["A", "B", "C"]})
+    r = runner.invoke(app, [a, b, "-k", "id", "-n", "1"])
+    assert r.exit_code == 1
+    assert "외 2건" in r.stdout  # 3개 중 1개만 보이고 나머지 절단
+
+
 def test_columns_filter(tmp_path):
     # b 만 바뀌는데 --columns a 로 a 만 비교 → 동일 취급(exit 0)
     a = _write(tmp_path / "a.parquet", {"id": [1], "a": ["x"], "b": ["p"]})
