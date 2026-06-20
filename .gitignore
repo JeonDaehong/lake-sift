@@ -23,6 +23,9 @@ htmlcov/
 # 내부 작업 계획 (공개 X, 로컬 보관)
 PLAN.md
 
+# 로컬 수동 테스트 (샘플 데이터/실행 결과 — 공개 X)
+sandbox/
+
 # editor / OS
 .DS_Store
 .idea/
