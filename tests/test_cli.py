@@ -6,9 +6,12 @@ import json
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 from typer.testing import CliRunner
 
-from lakesift.cli import app
+from lakesift.cli import _source, app
+from lakesift.core import DiffError
+from lakesift.sources.parquet import ParquetSource
 
 runner = CliRunner()
 
@@ -103,3 +106,38 @@ def test_columns_filter(tmp_path):
     b = _write(tmp_path / "b.parquet", {"id": [1], "a": ["x"], "b": ["q"]})
     assert runner.invoke(app, [a, b, "-k", "id", "-c", "a"]).exit_code == 0
     assert runner.invoke(app, [a, b, "-k", "id"]).exit_code == 1
+
+
+# --- 소스 스펙 파싱 (_source) -------------------------------------------------
+
+
+def test_source_defaults_to_parquet():
+    src = _source("data/a.parquet")
+    assert isinstance(src, ParquetSource) and src.path == "data/a.parquet"
+
+
+def test_source_iceberg_parses_catalog_identifier_and_snapshot(monkeypatch):
+    captured = {}
+
+    def fake_from_catalog(catalog, identifier, *, snapshot_id=None):
+        captured.update(catalog=catalog, identifier=identifier, snapshot_id=snapshot_id)
+        return object()  # 실제 카탈로그 접속 없이 인자만 검증
+
+    monkeypatch.setattr(
+        "lakesift.cli.IcebergSource.from_catalog", staticmethod(fake_from_catalog)
+    )
+    _source("iceberg:prod/sales.orders@123")
+    assert captured == {"catalog": "prod", "identifier": "sales.orders", "snapshot_id": 123}
+
+    _source("iceberg:prod/sales.orders")  # snapshot 생략 → None
+    assert captured["snapshot_id"] is None
+
+
+def test_source_iceberg_bad_format_raises():
+    with pytest.raises(DiffError):
+        _source("iceberg:no-slash")  # catalog/identifier 구분자 없음
+
+
+def test_source_iceberg_non_integer_snapshot_raises():
+    with pytest.raises(DiffError):
+        _source("iceberg:prod/sales.orders@latest")

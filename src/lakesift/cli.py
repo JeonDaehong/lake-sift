@@ -13,9 +13,13 @@ from rich.console import Console
 
 from lakesift.core import DiffError, diff
 from lakesift.render.human import render_human
+from lakesift.sources.base import Source
+from lakesift.sources.iceberg import IcebergSource
 from lakesift.sources.parquet import ParquetSource
 
-app = typer.Typer(add_completion=False, help="두 Parquet 파일을 셀 단위로 diff 한다.")
+app = typer.Typer(add_completion=False, help="두 데이터셋을 셀 단위로 diff 한다 (Parquet · Iceberg).")
+
+_ICEBERG_PREFIX = "iceberg:"
 
 
 def _split(value: Optional[str]) -> Optional[list[str]]:
@@ -24,10 +28,40 @@ def _split(value: Optional[str]) -> Optional[list[str]]:
     return [c.strip() for c in value.split(",") if c.strip()]
 
 
+def _source(spec: str) -> Source:
+    """피연산자 문자열을 Source 로 해석한다.
+
+    - `iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]` → IcebergSource
+      (카탈로그 접속 정보는 PyIceberg 표준 설정 `~/.pyiceberg.yaml`/env 에서 읽음)
+    - 그 외 → ParquetSource (파일 경로 또는 glob)
+    """
+    if not spec.startswith(_ICEBERG_PREFIX):
+        return ParquetSource(spec)
+
+    rest = spec[len(_ICEBERG_PREFIX):]
+    snapshot_id: int | None = None
+    if "@" in rest:
+        rest, _, snap = rest.rpartition("@")
+        try:
+            snapshot_id = int(snap)
+        except ValueError:
+            raise DiffError(f"Iceberg snapshot id 는 정수여야 합니다: {snap!r}")
+    catalog, sep, identifier = rest.partition("/")
+    if not sep or not catalog or not identifier:
+        raise DiffError(
+            "Iceberg 소스 형식: iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]"
+        )
+    return IcebergSource.from_catalog(catalog, identifier, snapshot_id=snapshot_id)
+
+
 @app.command()
 def main(
-    left: str = typer.Argument(..., help="기준(이전) Parquet 경로"),
-    right: str = typer.Argument(..., help="비교(이후) Parquet 경로"),
+    left: str = typer.Argument(
+        ..., help="기준(이전) 소스 — Parquet 경로 또는 iceberg:<catalog>/<ns>.<table>[@<snap>]"
+    ),
+    right: str = typer.Argument(
+        ..., help="비교(이후) 소스 — Parquet 경로 또는 iceberg:<catalog>/<ns>.<table>[@<snap>]"
+    ),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="행 식별 key (쉼표 구분)"),
     exclude: Optional[str] = typer.Option(None, "--exclude", "-x", help="비교 제외 컬럼"),
     columns: Optional[str] = typer.Option(None, "--columns", "-c", help="이 컬럼만 비교"),
@@ -57,8 +91,8 @@ def main(
 
     try:
         result = diff(
-            left=ParquetSource(left),
-            right=ParquetSource(right),
+            left=_source(left),
+            right=_source(right),
             key=keys,
             exclude=_split(exclude),
             columns=_split(columns),

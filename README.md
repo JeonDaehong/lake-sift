@@ -7,9 +7,9 @@
 **Value-level data diff for the lakehouse era.**
 
 `lake-sift` compares two datasets down to the individual cell — on a single node,
-with **no Spark, no warehouse, and no framework lock-in**. Today it diffs two
-Parquet files; the same engine extends to Iceberg snapshots and Delta versions
-through pluggable source adapters (see the [roadmap](#roadmap)).
+with **no Spark, no warehouse, and no framework lock-in**. It diffs Parquet files
+and Iceberg snapshots today, mixing the two freely; the same engine extends to
+Delta versions through pluggable source adapters (see the [roadmap](#roadmap)).
 
 ```console
 $ lake-sift a.parquet b.parquet --key id
@@ -54,7 +54,8 @@ format-native · review-oriented output.
 ## Installation
 
 ```bash
-pip install lake-sift          # once published to PyPI
+pip install lake-sift             # once published to PyPI
+pip install "lake-sift[iceberg]"  # with the Iceberg source (PyIceberg)
 ```
 
 Until the first PyPI release, install from source:
@@ -65,7 +66,8 @@ cd lake-sift
 pip install -e ".[dev]"
 ```
 
-Requires Python 3.10+.
+Requires Python 3.10+. The Iceberg source is an optional extra — Parquet diffing
+needs no extra dependencies.
 
 ## Usage
 
@@ -83,7 +85,27 @@ lake-sift prod.parquet pr.parquet -k id || echo "data change detected!"
 ```
 
 Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--summary`,
-`--allow-duplicates`.
+`--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`, `--sample/-n`, `--top`.
+
+### Iceberg snapshots
+
+Either operand may be an Iceberg table instead of a file, using the form
+`iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]`. Catalog connection
+details are read from PyIceberg's standard config
+([`~/.pyiceberg.yaml`](https://py.iceberg.apache.org/configuration/) or
+`PYICEBERG_*` environment variables) — lake-sift only references a catalog by name.
+
+```bash
+# Diff two snapshots of the same Iceberg table (audit a change)
+lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k order_id
+
+# Mix sources freely: validate a Parquet export against the live table
+lake-sift export.parquet "iceberg:prod/sales.orders" -k order_id
+```
+
+Requires the `iceberg` extra (`pip install "lake-sift[iceberg]"`). For finer
+control (row filters, field projection, an already-loaded table) use
+`IcebergSource` from the Python API.
 
 ### Python API
 
@@ -108,6 +130,23 @@ result.changed_cells   # [CellChange(key=..., column=..., old=..., new=...), ...
 result.to_json()
 ```
 
+`IcebergSource` reads a snapshot through PyIceberg and accepts a loaded table
+directly, or loads one from a catalog — with optional snapshot pinning, row
+filter, and field projection pushed down to the scan:
+
+```python
+from lakesift import diff, IcebergSource
+
+left = IcebergSource.from_catalog("prod", "sales.orders", snapshot_id=1001)
+right = IcebergSource.from_catalog(
+    "prod", "sales.orders", snapshot_id=1042,
+    row_filter="region = 'EU'",          # narrow the scan before diffing
+)
+
+with diff(left, right, key=["order_id"]) as result:
+    print(result.summary())
+```
+
 ### Exit codes
 
 | Code | Meaning |
@@ -120,9 +159,9 @@ result.to_json()
 
 | Version | Scope |
 |---|---|
-| **v0.1** | Parquet MVP — schema/row/cell diff, CLI, exit codes *(current)* |
+| v0.1 | Parquet MVP — schema/row/cell diff, CLI, exit codes |
 | v0.2 | numeric tolerance, ignore-case, `--sample`, top-k changed columns |
-| v0.3 | **Iceberg snapshot source** (PyIceberg) — same core, new adapter |
+| **v0.3** | **Iceberg snapshot source** (PyIceberg) — same core, new adapter *(current)* |
 | v0.4 | Delta version source (delta-rs) |
 | v0.5 | HTML report, GitHub Action |
 | v1.0 | stable API + documentation site |
