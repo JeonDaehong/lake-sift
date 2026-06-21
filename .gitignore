@@ -20,10 +20,10 @@ htmlcov/
 # claude code local settings
 .claude/settings.local.json
 
-# 내부 작업 계획 (공개 X, 로컬 보관)
+# internal work plan (not public, kept locally)
 PLAN.md
 
-# 로컬 수동 테스트 (샘플 데이터/실행 결과 — 공개 X)
+# local manual testing (sample data / run results — not public)
 sandbox/
 
 # editor / OS

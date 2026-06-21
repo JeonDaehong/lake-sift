@@ -8,13 +8,14 @@
 **Value-level data diff for the lakehouse era.**
 
 `lake-sift` compares two datasets down to the individual cell — on a single node,
-with **no Spark, no warehouse, and no framework lock-in**. It diffs Parquet files
-Iceberg snapshots, and Delta versions today, mixing them freely through
-pluggable source adapters (see the [roadmap](#roadmap)).
+with **no Spark, no warehouse, and no framework lock-in**. It diffs Parquet files,
+Iceberg snapshots, and Delta versions today, mixing them freely through pluggable
+source adapters.
 
 ```console
 $ lake-sift a.parquet b.parquet --key id
-+1 added  -1 removed  ~1 changed row (1 cell)
++1 added  -1 removed  ~1 changed rows (1 cells)
+  top changed columns: v (1)
 - id=1, v='a'
 + id=4, v='d'
 ~ [id=3] v: 'c' → 'C'
@@ -55,12 +56,12 @@ format-native · review-oriented output.
 ## Installation
 
 ```bash
-pip install lake-sift             # once published to PyPI
+pip install lake-sift             # Parquet diffing (no extra deps)
 pip install "lake-sift[iceberg]"  # with the Iceberg source (PyIceberg)
 pip install "lake-sift[delta]"    # with the Delta source (delta-rs)
 ```
 
-Until the first PyPI release, install from source:
+Or install from source (for development):
 
 ```bash
 git clone https://github.com/JeonDaehong/lake-sift.git
@@ -140,23 +141,26 @@ table) use `DeltaSource` from the Python API.
 
 The CLI is a thin wrapper over the library — both share the same core.
 
+The result owns a live DuckDB connection (rows/cells are streamed), so use it as a
+context manager. `added`/`removed`/`changed_cells` return a fresh **iterator** on each
+access — use `summary()` for counts and `list(...)` for the full list.
+
 ```python
 from lakesift import diff, ParquetSource
 
-result = diff(
+with diff(
     left=ParquetSource("a.parquet"),
     right=ParquetSource("b.parquet"),
     key=["id"],
     exclude=["updated_at"],
-)
-
-result.is_empty()      # True when there is no difference (the common CI check)
-result.summary()       # {"added": 1, "removed": 1, "changed": 1, ...}
-result.schema_changes  # [SchemaChange(...), ...]
-result.added           # rows only on the right
-result.removed         # rows only on the left
-result.changed_cells   # [CellChange(key=..., column=..., old=..., new=...), ...]
-result.to_json()
+) as result:
+    result.is_empty()      # True when there is no difference (the common CI check)
+    result.summary()       # {"added": 1, "removed": 1, "changed": 1, "changed_cells": 1, "schema_changes": 0}
+    result.schema_changes  # [SchemaChange(...), ...]
+    result.added           # iterator of rows only on the right
+    result.removed         # iterator of rows only on the left
+    result.changed_cells   # iterator of CellChange(key=..., column=..., old=..., new=...)
+    result.to_json()
 ```
 
 `IcebergSource` reads a snapshot through PyIceberg and accepts a loaded table
@@ -201,17 +205,6 @@ with diff(left, right, key=["order_id"]) as result:
 | `1` | Differences found |
 | `2` | Error — comparison not possible (missing key, unreadable input, duplicate keys, …) |
 
-## Roadmap
-
-| Version | Scope |
-|---|---|
-| v0.1 | Parquet MVP — schema/row/cell diff, CLI, exit codes |
-| v0.2 | numeric tolerance, ignore-case, `--sample`, top-k changed columns |
-| v0.3 | Iceberg snapshot source (PyIceberg) — same core, new adapter |
-| **v0.4** | **Delta version source** (delta-rs) — same core, new adapter *(current)* |
-| v0.5 | HTML report, GitHub Action |
-| v1.0 | stable API + documentation site |
-
 ## Non-goals
 
 `lake-sift` does one thing — diff. It is intentionally **not** a catalog or
@@ -241,8 +234,8 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Please keep changes within the documented v0 scope unless a roadmap item is
-being implemented.
+Please keep changes focused and aligned with the project's scope — `lake-sift`
+does one thing: diff.
 
 ## License
 
