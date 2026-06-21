@@ -1,4 +1,4 @@
-"""lake-sift — 값 단위 데이터 diff (Parquet · Iceberg · Delta, single-node, no Spark)."""
+"""lake-sift — value-level data diff (Parquet · Iceberg · Delta, single-node, no Spark)."""
 
 from lakesift.core import diff
 from lakesift.result import CellChange, DiffResult, SchemaChange

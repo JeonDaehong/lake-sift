@@ -1,12 +1,14 @@
-"""diff 엔진 — key/옵션을 받아 DuckDB SQL 로 비교한다.
+"""diff engine — takes key/options and compares via DuckDB SQL.
 
-Python 은 SQL 을 생성/오케스트레이션만 하고, 무거운 비교는 전부 DuckDB 에 위임한다.
-NULL 동등 비교(`NULL == NULL` 을 같음으로) 는 SQL 의 `IS [NOT] DISTINCT FROM` 으로 처리.
-float 는 v0 에서 정확 일치(exact) 비교 — 수치 tolerance 는 v0.2.
+Python only generates/orchestrates SQL; the heavy comparison is delegated entirely to
+DuckDB. NULL-equality comparison (treating `NULL == NULL` as equal) is handled by SQL's
+`IS [NOT] DISTINCT FROM`. Floats use exact-match comparison in v0 — numeric tolerance is
+in v0.2.
 
-메모리: 행/셀 델타는 파이썬 list 로 전량 적재하지 않는다. 카운트는 집계 쿼리로 먼저
-구하고, 실제 행/셀은 `DiffResult` 가 접근할 때 DuckDB 커서로 배치 스트리밍한다.
-이 때문에 결과는 살아있는 커넥션을 소유하므로 컨텍스트 매니저로 쓰는 게 안전하다.
+Memory: row/cell deltas are not materialized into Python lists. Counts are computed
+first with aggregate queries, and the actual rows/cells are streamed in batches through a
+DuckDB cursor when `DiffResult` accesses them. Because of this the result owns a live
+connection, so using it as a context manager is the safe choice.
 """
 
 from __future__ import annotations
@@ -20,31 +22,32 @@ from lakesift.result import CellChange, DiffResult, SchemaChange
 if TYPE_CHECKING:
     from lakesift.sources.base import Source
 
-# 커서에서 한 번에 끌어오는 행 수. 너무 작으면 왕복 비용, 너무 크면 메모리.
+# Number of rows pulled from a cursor at once. Too small = round-trip cost, too large = memory.
 _BATCH = 2048
 
 
 class DiffError(Exception):
-    """비교를 진행할 수 없는 에러 (CLI 에서 exit code 2 로 매핑)."""
+    """An error that prevents comparison (mapped to exit code 2 in the CLI)."""
 
 
 def _q(name: str) -> str:
-    """식별자를 안전하게 따옴표로 감싼다."""
+    """Safely quote an identifier."""
     return '"' + name.replace('"', '""') + '"'
 
 
 def _schema_of(rel: "duckdb.DuckDBPyRelation") -> dict[str, str]:
-    """relation 의 컬럼명 → 타입 문자열 (입력 순서 유지)."""
+    """Relation column name -> type string (preserving input order)."""
     return {name: str(t) for name, t in zip(rel.columns, rel.types)}
 
 
 def _probe_schema(con, source: "Source") -> dict[str, str]:
-    """데이터를 읽지 않고(가능하면) 소스의 컬럼명 → 타입을 가져온다.
+    """Get the source's column name -> type without reading data (when possible).
 
-    소스가 `arrow_schema()` 를 제공하면 빈 Arrow 테이블로 DuckDB 타입을 뽑는다
-    (Iceberg/Delta: 메타데이터만, 전량 스캔 없이). 없으면 `to_relation` 의 relation
-    에서 읽는다(Parquet 은 lazy 라 footer 만 읽어 싸다). 어느 쪽이든 타입 문자열은
-    DuckDB 표현으로 통일돼 좌/우 비교가 일관된다.
+    If the source provides `arrow_schema()`, derive DuckDB types from an empty Arrow
+    table (Iceberg/Delta: metadata only, no full scan). Otherwise read from the
+    `to_relation` relation (Parquet is lazy, so only the footer is read — cheap). Either
+    way the type strings are unified to DuckDB's representation, so left/right comparison
+    stays consistent.
     """
     arrow_schema = getattr(source, "arrow_schema", None)
     if arrow_schema is not None:
@@ -58,7 +61,7 @@ def _has_duplicate_keys(con, view: str, key: Sequence[str]) -> bool:
     return con.execute(sql).fetchone() is not None
 
 
-# DuckDB 타입 문자열 분류 (대소문자/파라미터 무시).
+# Classify DuckDB type strings (ignoring case/parameters).
 _NUMERIC_HINTS = ("INT", "DECIMAL", "NUMERIC", "DOUBLE", "FLOAT", "REAL", "HUGEINT")
 _TEXT_HINTS = ("VARCHAR", "CHAR", "TEXT", "STRING")
 
@@ -74,17 +77,17 @@ def _is_text(t: str) -> bool:
 
 
 def _diff_pred(col: str, ltype: str, *, tolerance: float | None, ignore_case: bool) -> str:
-    """셀이 '다르다'고 볼 때 TRUE 인 SQL 불리언 식.
+    """SQL boolean expression that is TRUE when a cell is considered 'different'.
 
-    기본은 `IS DISTINCT FROM` (NULL==NULL 동일). 옵션:
-    - tolerance: 수치 컬럼은 `abs(l-r) <= tol` 이면 같음으로 본다.
-    - ignore_case: 문자열 컬럼은 대소문자 무시 비교.
-    컬럼 타입(왼쪽 기준)에 맞는 한 가지만 적용된다.
+    The default is `IS DISTINCT FROM` (NULL==NULL equal). Options:
+    - tolerance: numeric columns are equal when `abs(l-r) <= tol`.
+    - ignore_case: text columns are compared case-insensitively.
+    Only one applies, based on the column type (left side).
     """
     lc, rc = f"l.{_q(col)}", f"r.{_q(col)}"
     if tolerance is not None and _is_numeric(ltype):
-        tol = repr(float(tolerance))  # float 이므로 인라인해도 인젝션 안전
-        # 다름 = NOT(둘 다 NULL 이거나, 둘 다 non-NULL 이고 tol 이내)
+        tol = repr(float(tolerance))  # a float, so inlining is injection-safe
+        # different = NOT (both NULL, or both non-NULL and within tol)
         return (
             f"NOT ( ({lc} IS NULL AND {rc} IS NULL) OR "
             f"({lc} IS NOT NULL AND {rc} IS NOT NULL AND abs({lc} - {rc}) <= {tol}) )"
@@ -95,7 +98,7 @@ def _diff_pred(col: str, ltype: str, *, tolerance: float | None, ignore_case: bo
 
 
 def _stream_dicts(con, sql: str):
-    """sql 결과를 행당 dict 로 흘려주는 generator factory (접근마다 fresh 커서)."""
+    """Generator factory yielding each result row as a dict (fresh cursor per access)."""
 
     def factory() -> Iterator[dict[str, Any]]:
         cur = con.cursor()
@@ -112,10 +115,11 @@ def _stream_dicts(con, sql: str):
 
 
 def _stream_cells(con, key: list[str], compare_cols: list[str], key_join: str, preds: dict[str, str]):
-    """변경 셀을 컬럼별 커서를 이어가며 흘려주는 generator factory.
+    """Generator factory streaming changed cells, one cursor per column in turn.
 
-    컬럼마다 old/new 타입이 달라 한 쿼리로 합치면 공통 타입으로 강제 변환되어 값이
-    왜곡될 수 있다. 그래서 컬럼별 쿼리를 순차로 스트리밍해 원래 타입을 보존한다.
+    Each column may have different old/new types; merging into one query would coerce
+    them to a common type and distort values. So we stream per-column queries in sequence
+    to preserve the original types.
     """
     key_sel = ", ".join(f"l.{_q(k)} AS {_q(k)}" for k in key)
 
@@ -151,31 +155,33 @@ def diff(
     tolerance: float | None = None,
     ignore_case: bool = False,
 ) -> DiffResult:
-    """left 와 right 를 key 기준으로 셀 단위 비교한다.
+    """Compare `left` and `right` cell by cell, keyed on `key`.
 
-    반환된 `DiffResult` 는 살아있는 DuckDB 커넥션을 소유한다. 행/셀을 끝까지
-    스트리밍하므로 `with diff(...) as result:` 로 쓰거나 `result.close()` 를 호출해
-    커넥션을 닫아라.
+    The returned `DiffResult` owns a live DuckDB connection. Since it streams rows/cells
+    to the end, use it as `with diff(...) as result:` or call `result.close()` to close
+    the connection.
 
     Raises:
-        DiffError: key 누락/부재, 중복 key(allow_duplicates=False) 등 비교 불가 상황.
+        DiffError: comparison is impossible (missing/absent key, duplicate keys with
+            allow_duplicates=False, etc.).
     """
     key = list(key)
     if not key:
-        # v0: set-diff 폴백은 미구현. 명시적 에러로 끊는다.
-        raise DiffError("key 가 필요합니다 (set-diff 폴백은 아직 미지원).")
+        # v0: no set-diff fallback. Stop with an explicit error.
+        raise DiffError("a key is required (set-diff fallback is not supported yet).")
 
     exclude_set = set(exclude or [])
     columns_filter = set(columns) if columns else None
-    # projection 은 사용자가 비교 범위를 좁혔을 때만(--columns/--exclude) 활성화한다.
-    # 활성 시 key+비교대상 컬럼만 스캔에 내려보내(pushdown) 안 쓰는 컬럼은 읽지 않는다.
-    # 부작용: added/removed 행도 그 컬럼들만 보인다(스키마 변경 감지는 전체 스키마 기준).
+    # Projection is only enabled when the user narrows the comparison (--columns/--exclude).
+    # When enabled, only key + compared columns are pushed down to the scan, so unused
+    # columns are never read. Side effect: added/removed rows then show only those columns
+    # (schema-change detection is still based on the full schema).
     projection_active = columns_filter is not None or bool(exclude_set)
 
-    con = duckdb.connect()  # in-memory; 성공 시 DiffResult 가 소유권을 넘겨받는다.
+    con = duckdb.connect()  # in-memory; on success DiffResult takes ownership.
     try:
         if projection_active:
-            # 데이터 materialize 전에 스키마부터 싸게 확보해 읽을 컬럼을 결정한다.
+            # Get the schema cheaply before materializing data, to decide which columns to read.
             lschema = _probe_schema(con, left)
             rschema = _probe_schema(con, right)
         else:
@@ -184,12 +190,12 @@ def diff(
             lschema = _schema_of(lrel)
             rschema = _schema_of(rrel)
 
-        # --- key 검증 ---
+        # --- key validation ---
         missing = [k for k in key if k not in lschema or k not in rschema]
         if missing:
-            raise DiffError(f"key 컬럼이 양쪽에 모두 존재하지 않습니다: {missing}")
+            raise DiffError(f"key columns are not present on both sides: {missing}")
 
-        # --- 스키마 델타 ---
+        # --- schema delta ---
         schema_changes: list[SchemaChange] = []
         for col, t in lschema.items():
             if col not in rschema:
@@ -202,7 +208,7 @@ def diff(
             if col not in lschema:
                 schema_changes.append(SchemaChange(col, "added", new_type=t))
 
-        # --- 비교 대상 컬럼: 공통 컬럼 - key - exclude (columns 지정 시 그걸로 제한) ---
+        # --- compared columns: common columns - key - exclude (restricted by columns if given) ---
         common = [c for c in lschema if c in rschema]
         compare_cols = [
             c
@@ -212,33 +218,33 @@ def diff(
             and (columns_filter is None or c in columns_filter)
         ]
 
-        # --- relation materialize + 뷰 등록 ---
-        # projection 활성 시 여기서 key+비교대상만 스캔한다(pushdown). 비활성이면
-        # 위에서 이미 전체를 materialize 했다.
+        # --- materialize relations + register views ---
+        # When projection is active, scan only key + compared columns here (pushdown).
+        # Otherwise we already materialized everything above.
         if projection_active:
-            proj = key + compare_cols  # compare_cols 는 key 를 제외하므로 중복 없음
+            proj = key + compare_cols  # compare_cols excludes key, so no duplicates
             lrel = left.to_relation(con, columns=proj)
             rrel = right.to_relation(con, columns=proj)
         lrel.create_view("l", replace=True)
         rrel.create_view("r", replace=True)
 
-        # --- 중복 key ---
+        # --- duplicate key ---
         if not allow_duplicates:
             for view, label in (("l", "left"), ("r", "right")):
                 if _has_duplicate_keys(con, view, key):
                     raise DiffError(
-                        f"{label} 에 중복 key 가 있습니다. --allow-duplicates 로 우회 가능."
+                        f"{label} has duplicate keys. Use --allow-duplicates to bypass."
                     )
 
         key_join = " AND ".join(f"l.{_q(k)} IS NOT DISTINCT FROM r.{_q(k)}" for k in key)
 
-        # 셀 비교 술어를 컬럼마다 한 번 만들어 카운트/스트리밍에 공유 (tolerance/ignore_case 반영).
+        # Build the per-column diff predicate once, shared by counting/streaming (reflects tolerance/ignore_case).
         preds = {
             c: _diff_pred(c, lschema[c], tolerance=tolerance, ignore_case=ignore_case)
             for c in compare_cols
         }
 
-        # --- 카운트(집계로 먼저) — 실제 행/셀은 접근 시 스트리밍한다 ---
+        # --- counts (aggregates first) — actual rows/cells are streamed on access ---
         n_removed = con.execute(
             f"SELECT count(*) FROM l ANTI JOIN r ON {key_join}"
         ).fetchone()[0]
@@ -251,7 +257,7 @@ def diff(
         changed_by_column: list[tuple[str, int]] = []
         if compare_cols:
             any_diff = " OR ".join(f"({preds[c]})" for c in compare_cols)
-            # 컬럼별 변경 셀 수를 한 스캔에서 같이 뽑는다(총합은 파이썬에서 합산).
+            # Pull each column's changed-cell count in the same scan (sum totals in Python).
             per_col = ", ".join(
                 f"COALESCE(sum(({preds[c]})::INT), 0) AS col{i}"
                 for i, c in enumerate(compare_cols)
@@ -288,6 +294,6 @@ def diff(
             resource=con,
         )
     except BaseException:
-        # 결과 반환 전 실패 → 커넥션은 우리가 닫는다 (성공 경로에선 DiffResult 소유).
+        # Failure before returning the result -> we close the connection (on success DiffResult owns it).
         con.close()
         raise

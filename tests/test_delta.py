@@ -1,4 +1,4 @@
-"""Delta 소스 어댑터 검증. deltalake 미설치면 모듈 전체 skip."""
+"""Delta source adapter. The whole module is skipped if deltalake isn't installed."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from lakesift import DeltaSource, ParquetSource, diff  # noqa: E402
 
 
 def _delta(tmp_path, name: str, data: pa.Table) -> str:
-    """로컬 디렉터리에 Delta 테이블을 쓰고 경로(str) 반환."""
+    """Write a Delta table into a local directory and return its path (str)."""
     path = tmp_path / name
     write_deltalake(str(path), data)
     return str(path)
@@ -38,7 +38,7 @@ def test_delta_identical_is_empty(tmp_path):
 
 
 def test_delta_time_travel_version(tmp_path):
-    """version 으로 이전 버전 타임트래블 → 같은 테이블의 v0 vs v1 비교."""
+    """Time travel via version -> compare v0 vs v1 of the same table."""
     path = tmp_path / "t"
     write_deltalake(str(path), pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"]}))
     write_deltalake(str(path), pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "B"]}), mode="overwrite")
@@ -63,7 +63,7 @@ def test_delta_to_relation_projection(tmp_path):
 
 
 def test_delta_columns_pushdown_projects_rows(tmp_path):
-    """--columns 로 비교하면 added 행도 key+비교대상만 보인다(pushdown)."""
+    """With --columns, added rows show only key + compared columns (pushdown)."""
     left = _delta(tmp_path, "pl", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["x"]}))
     right = _delta(tmp_path, "pr", pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"], "w": ["x", "y"]}))
     with diff(DeltaSource(left), DeltaSource(right), key=["id"], columns=["v"]) as r:
@@ -72,7 +72,7 @@ def test_delta_columns_pushdown_projects_rows(tmp_path):
 
 
 def test_delta_vs_parquet(tmp_path):
-    """소스 혼합: 왼쪽 delta, 오른쪽 parquet 도 동일 코어로 비교된다."""
+    """Mixed sources: left delta, right parquet are compared by the same core."""
     import pyarrow.parquet as pq
 
     left = _delta(tmp_path, "delta_t", pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"]}))
@@ -83,7 +83,7 @@ def test_delta_vs_parquet(tmp_path):
 
 
 def test_delta_accepts_table_instance(tmp_path):
-    """경로 대신 이미 로드한 DeltaTable 인스턴스도 받는다."""
+    """An already-loaded DeltaTable instance is accepted instead of a path."""
     path = tmp_path / "inst"
     write_deltalake(str(path), pa.table({"id": pa.array([1], pa.int64()), "v": ["a"]}))
     dt = DeltaTable(str(path))

@@ -1,4 +1,4 @@
-"""Iceberg 소스 어댑터 검증. pyiceberg 미설치면 모듈 전체 skip."""
+"""Iceberg source adapter. The whole module is skipped if pyiceberg isn't installed."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from lakesift import IcebergSource, ParquetSource, diff  # noqa: E402
 
 
 def _ice(tmp_path, name: str, data: pa.Table):
-    """로컬 SQL 카탈로그에 iceberg 테이블 하나 만들고 데이터 적재 후 Table 반환."""
+    """Create one iceberg table in a local SQL catalog, load data, return the Table."""
     wh = tmp_path / f"wh_{name}"
     os.makedirs(wh, exist_ok=True)
     cat = SqlCatalog(
@@ -61,7 +61,7 @@ def test_iceberg_to_relation_projection(tmp_path):
 
 
 def test_iceberg_columns_pushdown_projects_rows(tmp_path):
-    """--columns 로 비교하면 added 행도 key+비교대상만 보인다(pushdown)."""
+    """With --columns, added rows show only key + compared columns (pushdown)."""
     left = _ice(tmp_path, "pl", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["x"]}))
     right = _ice(tmp_path, "pr", pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"], "w": ["x", "y"]}))
     with diff(IcebergSource(left), IcebergSource(right), key=["id"], columns=["v"]) as r:
@@ -70,7 +70,7 @@ def test_iceberg_columns_pushdown_projects_rows(tmp_path):
 
 
 def test_iceberg_vs_parquet(tmp_path):
-    """소스 혼합: 왼쪽 iceberg, 오른쪽 parquet 도 동일 코어로 비교된다."""
+    """Mixed sources: left iceberg, right parquet are compared by the same core."""
     import pyarrow.parquet as pq
 
     left = _ice(tmp_path, "ice", pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"]}))

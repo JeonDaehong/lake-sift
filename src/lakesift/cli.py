@@ -1,6 +1,7 @@
-"""CLI (typer) — 라이브러리 API `diff()` 의 얇은 래퍼.
+"""CLI (typer) — a thin wrapper over the library API `diff()`.
 
-exit code 규약: 0 = 동일, 1 = 차이 있음, 2 = 에러(비교 불가).
+Exit-code convention: 0 = identical, 1 = differences found, 2 = error (comparison
+not possible).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from lakesift.sources.delta import DeltaSource
 from lakesift.sources.iceberg import IcebergSource
 from lakesift.sources.parquet import ParquetSource
 
-app = typer.Typer(add_completion=False, help="두 데이터셋을 셀 단위로 diff 한다 (Parquet · Iceberg · Delta).")
+app = typer.Typer(add_completion=False, help="Diff two datasets at the cell level (Parquet · Iceberg · Delta).")
 
 _ICEBERG_PREFIX = "iceberg:"
 _DELTA_PREFIX = "delta:"
@@ -31,12 +32,13 @@ def _split(value: Optional[str]) -> Optional[list[str]]:
 
 
 def _source(spec: str) -> Source:
-    """피연산자 문자열을 Source 로 해석한다.
+    """Resolve an operand string into a Source.
 
-    - `iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]` → IcebergSource
-      (카탈로그 접속 정보는 PyIceberg 표준 설정 `~/.pyiceberg.yaml`/env 에서 읽음)
-    - `delta:<path-or-uri>[@<version>]` → DeltaSource (로컬 경로 또는 s3:// 등 URI)
-    - 그 외 → ParquetSource (파일 경로 또는 glob)
+    - `iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]` -> IcebergSource
+      (catalog connection details are read from PyIceberg's standard config,
+      `~/.pyiceberg.yaml`/env)
+    - `delta:<path-or-uri>[@<version>]` -> DeltaSource (local path or a URI such as s3://)
+    - anything else -> ParquetSource (file path or glob)
     """
     if spec.startswith(_ICEBERG_PREFIX):
         return _iceberg_source(spec[len(_ICEBERG_PREFIX):])
@@ -52,11 +54,11 @@ def _iceberg_source(rest: str) -> IcebergSource:
         try:
             snapshot_id = int(snap)
         except ValueError:
-            raise DiffError(f"Iceberg snapshot id 는 정수여야 합니다: {snap!r}")
+            raise DiffError(f"Iceberg snapshot id must be an integer: {snap!r}")
     catalog, sep, identifier = rest.partition("/")
     if not sep or not catalog or not identifier:
         raise DiffError(
-            "Iceberg 소스 형식: iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]"
+            "Iceberg source format: iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]"
         )
     return IcebergSource.from_catalog(catalog, identifier, snapshot_id=snapshot_id)
 
@@ -68,9 +70,9 @@ def _delta_source(rest: str) -> DeltaSource:
         try:
             version = int(ver)
         except ValueError:
-            raise DiffError(f"Delta version 은 정수여야 합니다: {ver!r}")
+            raise DiffError(f"Delta version must be an integer: {ver!r}")
     if not rest:
-        raise DiffError("Delta 소스 형식: delta:<path-or-uri>[@<version>]")
+        raise DiffError("Delta source format: delta:<path-or-uri>[@<version>]")
     return DeltaSource(rest, version=version)
 
 
@@ -78,29 +80,29 @@ def _delta_source(rest: str) -> DeltaSource:
 def main(
     left: str = typer.Argument(
         ...,
-        help="기준(이전) 소스 — Parquet 경로 · iceberg:<catalog>/<ns>.<table>[@<snap>] · delta:<path>[@<ver>]",
+        help="Base (before) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap>] · delta:<path>[@<ver>]",
     ),
     right: str = typer.Argument(
         ...,
-        help="비교(이후) 소스 — Parquet 경로 · iceberg:<catalog>/<ns>.<table>[@<snap>] · delta:<path>[@<ver>]",
+        help="Compared (after) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap>] · delta:<path>[@<ver>]",
     ),
-    key: Optional[str] = typer.Option(None, "--key", "-k", help="행 식별 key (쉼표 구분)"),
-    exclude: Optional[str] = typer.Option(None, "--exclude", "-x", help="비교 제외 컬럼"),
-    columns: Optional[str] = typer.Option(None, "--columns", "-c", help="이 컬럼만 비교"),
-    json_out: bool = typer.Option(False, "--json", help="기계용 JSON 출력"),
-    summary: bool = typer.Option(False, "--summary", help="요약만 출력"),
-    allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="중복 key 허용"),
+    key: Optional[str] = typer.Option(None, "--key", "-k", help="Row identity key (comma-separated)"),
+    exclude: Optional[str] = typer.Option(None, "--exclude", "-x", help="Columns to exclude from comparison"),
+    columns: Optional[str] = typer.Option(None, "--columns", "-c", help="Compare only these columns"),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
+    summary: bool = typer.Option(False, "--summary", help="Print the summary only"),
+    allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicate keys"),
     tolerance: Optional[float] = typer.Option(
-        None, "--tolerance", "-t", help="수치 컬럼 허용 오차 (abs(l-r)<=tol 이면 같음)"
+        None, "--tolerance", "-t", help="Numeric tolerance (equal when abs(l-r) <= tol)"
     ),
     ignore_case: bool = typer.Option(
-        False, "--ignore-case", "-i", help="문자열 컬럼 대소문자 무시 비교"
+        False, "--ignore-case", "-i", help="Case-insensitive comparison for text columns"
     ),
     sample: Optional[int] = typer.Option(
-        None, "--sample", "-n", help="사람용 출력에서 종류별 표시할 최대 건수"
+        None, "--sample", "-n", help="Max rows to show per change kind in human output"
     ),
     top: int = typer.Option(
-        5, "--top", help="변경 셀 상위 컬럼 K개 표시 (0=끄기)"
+        5, "--top", help="Show the top K columns by changed cells (0 = off)"
     ),
 ) -> None:
     console = Console()
@@ -108,7 +110,7 @@ def main(
 
     keys = _split(key)
     if not keys:
-        err.print("[red]에러:[/red] --key 가 필요합니다.")
+        err.print("[red]error:[/red] --key is required.")
         raise typer.Exit(code=2)
 
     try:
@@ -123,16 +125,16 @@ def main(
             ignore_case=ignore_case,
         )
     except DiffError as e:
-        err.print(f"[red]에러:[/red] {e}")
+        err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=2)
-    except Exception as e:  # 읽기 실패 등도 비교 불가로 취급
-        err.print(f"[red]에러:[/red] {e}")
+    except Exception as e:  # treat read failures, etc. as comparison-not-possible
+        err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=2)
 
-    # result 는 살아있는 커넥션을 소유한다 — with 로 확실히 닫는다.
+    # result owns a live connection — close it for sure with `with`.
     with result:
         if json_out:
-            # 행/셀을 한 건씩 흘려쓴다 (rich 버퍼링/색 입히기 우회).
+            # Stream rows/cells one at a time (bypassing rich buffering/coloring).
             result.write_json(sys.stdout)
             sys.stdout.write("\n")
         else:

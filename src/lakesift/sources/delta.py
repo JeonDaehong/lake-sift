@@ -1,11 +1,11 @@
-"""Delta Lake 소스 어댑터 (v0.4) — delta-rs 로 테이블을 읽는다.
+"""Delta Lake source adapter (v0.4) — reads a table via delta-rs.
 
-코어/렌더러는 그대로. delta-rs `DeltaTable` 을 받아 Arrow 로 materialize → DuckDB
-relation 으로 넘긴다. Iceberg 어댑터와 동형이다(스캔은 Arrow 로 전량 적재 — 단일
-노드 도구라 허용. 큰 테이블은 `columns`/`filters` 로 미리 줄여라). diff 출력 자체는
-여전히 스트리밍된다.
+The core/renderers are unchanged. Takes a delta-rs `DeltaTable`, materializes it to Arrow
+-> hands it to DuckDB as a relation. Isomorphic to the Iceberg adapter (the scan loads the
+whole table into Arrow — allowed for a single-node tool; narrow large tables ahead of time
+with `columns`/`filters`). The diff output itself is still streamed.
 
-deltalake 는 선택 의존성: `pip install "lake-sift[delta]"`.
+deltalake is an optional dependency: `pip install "lake-sift[delta]"`.
 """
 
 from __future__ import annotations
@@ -21,18 +21,19 @@ if TYPE_CHECKING:
 def _require_deltalake() -> None:
     try:
         import deltalake  # noqa: F401
-    except ImportError as e:  # pragma: no cover - 설치 안 된 환경에서만
+    except ImportError as e:  # pragma: no cover - only in environments without it installed
         raise ImportError(
-            'Delta 소스는 deltalake 가 필요합니다: pip install "lake-sift[delta]"'
+            'The Delta source requires deltalake: pip install "lake-sift[delta]"'
         ) from e
 
 
 class DeltaSource:
-    """delta-rs 로 Delta Lake 테이블을 DuckDB relation 으로 읽는다.
+    """Reads a Delta Lake table into a DuckDB relation via delta-rs.
 
-    경로/URI 로 열거나(`DeltaSource("/path/to/table")`, `DeltaSource("s3://bucket/t")`),
-    이미 로드한 `DeltaTable` 을 직접 넘긴다(`DeltaSource(dt)`). `version` 으로 특정
-    버전 타임트래블, `storage_options` 로 원격 스토리지 자격증명을 전달한다.
+    Open by path/URI (`DeltaSource("/path/to/table")`, `DeltaSource("s3://bucket/t")`),
+    or pass an already-loaded `DeltaTable` directly (`DeltaSource(dt)`). Use `version`
+    for time travel to a specific version, and `storage_options` to pass credentials for
+    remote storage.
     """
 
     def __init__(
@@ -56,7 +57,7 @@ class DeltaSource:
 
         if isinstance(self.table, DeltaTable):
             dt = self.table
-            if self.version is not None:  # 넘겨받은 객체를 요청 버전으로 이동시킨다
+            if self.version is not None:  # move the given object to the requested version
                 dt.load_as_version(self.version)
             return dt
         return DeltaTable(
@@ -66,7 +67,7 @@ class DeltaSource:
         )
 
     def arrow_schema(self) -> Any:
-        """데이터를 읽지 않고 테이블 스키마만 Arrow 스키마로 돌려준다(메타데이터)."""
+        """Return the table schema as an Arrow schema without reading data (metadata)."""
         return self._load().schema().to_arrow()
 
     def to_relation(
@@ -76,7 +77,7 @@ class DeltaSource:
         columns: Sequence[str] | None = None,
     ) -> "duckdb.DuckDBPyRelation":
         dt = self._load()
-        # 코어가 넘긴 projection 이 있으면 그걸로, 없으면 생성 시 지정한 컬럼.
+        # Use the projection passed by the core if any; otherwise the columns set at construction.
         cols = list(columns) if columns is not None else self.columns
         arrow = dt.to_pyarrow_table(columns=cols, filters=self.filters)
         return con.from_arrow(arrow)

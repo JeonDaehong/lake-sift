@@ -1,4 +1,4 @@
-"""사람이 보는 컬러 출력 (+ 추가 / - 삭제 / ~ 셀 변경)."""
+"""Human-readable color output (+ added / - removed / ~ changed cell)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from rich.markup import escape
 
 from lakesift.result import DiffResult
 
-# v0: --sample 이 없으므로 콘솔 폭발 방지용 기본 상한.
+# v0: with no --sample, a default cap to keep the console from exploding.
 DEFAULT_MAX_ROWS = 20
 
 
@@ -30,48 +30,48 @@ def render_human(
     console = console or Console()
 
     if result.is_empty():
-        console.print("[green]= 차이 없음[/green]")
+        console.print("[green]= no differences[/green]")
         return
 
-    # 스키마 델타 (컬럼명/타입은 rich 마크업으로 오해되지 않도록 escape)
+    # Schema deltas (escape column names/types so they aren't read as rich markup).
     for c in result.schema_changes:
         col = escape(c.column)
         if c.kind == "added":
-            console.print(f"[green]+ 컬럼[/green] {col} ({escape(str(c.new_type))})")
+            console.print(f"[green]+ column[/green] {col} ({escape(str(c.new_type))})")
         elif c.kind == "removed":
-            console.print(f"[red]- 컬럼[/red] {col} ({escape(str(c.old_type))})")
+            console.print(f"[red]- column[/red] {col} ({escape(str(c.old_type))})")
         else:
             console.print(
-                f"[yellow]~ 컬럼[/yellow] {col}: "
+                f"[yellow]~ column[/yellow] {col}: "
                 f"{escape(str(c.old_type))} → {escape(str(c.new_type))}"
             )
 
     s = result.summary()
     console.print(
-        f"[green]+{s['added']}[/green] 추가  "
-        f"[red]-{s['removed']}[/red] 삭제  "
-        f"[yellow]~{s['changed']}[/yellow] 변경 행 "
-        f"([yellow]{s['changed_cells']}[/yellow] 셀)"
+        f"[green]+{s['added']}[/green] added  "
+        f"[red]-{s['removed']}[/red] removed  "
+        f"[yellow]~{s['changed']}[/yellow] changed rows "
+        f"([yellow]{s['changed_cells']}[/yellow] cells)"
     )
 
-    # 변경 셀이 많은 컬럼 상위 K (어디가 흔들렸는지 한눈에)
+    # Top-K columns by changed cells (to see at a glance where things shifted).
     if top_columns > 0 and result.changed_by_column:
         top = result.changed_by_column[:top_columns]
         parts = ", ".join(f"{escape(col)} ({n})" for col, n in top)
         rest = len(result.changed_by_column) - len(top)
         if rest > 0:
-            parts += f", [dim]… 외 {rest}개[/dim]"
-        console.print(f"  [dim]변경 셀 상위 컬럼:[/dim] {parts}")
+            parts += f", [dim]… +{rest} more[/dim]"
+        console.print(f"  [dim]top changed columns:[/dim] {parts}")
 
     if summary_only:
         return
 
     def _emit(items, total, render, prefix, style):
-        # items 는 스트리밍 이터레이터일 수 있다 — 전량 적재하지 말고 max_rows 까지만.
+        # items may be a streaming iterator — don't materialize, stop at max_rows.
         shown = 0
         for it in items:
             if shown >= max_rows:
-                console.print(f"  [dim]... 외 {total - max_rows}건[/dim]")
+                console.print(f"  [dim]... +{total - max_rows} more[/dim]")
                 break
             console.print(f"[{style}]{prefix}[/{style}] {escape(render(it))}")
             shown += 1

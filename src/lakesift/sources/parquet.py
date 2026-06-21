@@ -1,4 +1,4 @@
-"""Parquet 소스 어댑터 (v0)."""
+"""Parquet source adapter (v0)."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ if TYPE_CHECKING:
 
 
 def _q(name: str) -> str:
-    """식별자를 안전하게 따옴표로 감싼다."""
+    """Safely quote an identifier."""
     return '"' + name.replace('"', '""') + '"'
 
 
 class ParquetSource:
-    """단일 Parquet 파일(또는 glob)을 DuckDB relation 으로 읽는다."""
+    """Reads a single Parquet file (or glob) into a DuckDB relation."""
 
     def __init__(self, path: str | os.PathLike[str]):
         self.path = os.fspath(path)
@@ -26,7 +26,7 @@ class ParquetSource:
         *,
         columns: Sequence[str] | None = None,
     ) -> "duckdb.DuckDBPyRelation":
-        # 파라미터 바인딩으로 경로 주입 (SQL 인젝션/따옴표 이슈 회피).
+        # Inject the path via parameter binding (avoids SQL injection/quoting issues).
         select = "*" if columns is None else ", ".join(_q(c) for c in columns)
         return con.from_query(f"SELECT {select} FROM read_parquet(?)", params=[self.path])
 

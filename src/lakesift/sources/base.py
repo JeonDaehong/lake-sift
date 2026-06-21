@@ -1,6 +1,6 @@
-"""Source 인터페이스 — 입력을 (DuckDB relation + schema) 로 해석한다.
+"""Source interface — resolves an input into a (DuckDB relation + schema).
 
-어댑터만 갈아끼우면 입력 포맷이 늘어난다. 코어/렌더러는 그대로.
+Swap the adapter and you add an input format. The core/renderers stay the same.
 """
 
 from __future__ import annotations
@@ -13,12 +13,13 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class Source(Protocol):
-    """모든 입력 소스가 구현해야 하는 최소 계약.
+    """The minimal contract every input source must implement.
 
-    선택적으로 `arrow_schema() -> pyarrow.Schema` 를 구현하면, 코어가 컬럼
-    projection(pushdown) 을 결정하기 전에 데이터를 읽지 않고 스키마만 싸게
-    가져온다(Iceberg/Delta 처럼 `to_relation` 이 전량 materialize 하는 소스에서
-    유효). 미구현이면 코어는 `to_relation` 의 relation 에서 스키마를 읽는다.
+    Optionally implementing `arrow_schema() -> pyarrow.Schema` lets the core fetch the
+    schema cheaply, without reading data, before deciding on column projection
+    (pushdown) — useful for sources like Iceberg/Delta where `to_relation` materializes
+    everything. If not implemented, the core reads the schema from the `to_relation`
+    relation.
     """
 
     def to_relation(
@@ -27,8 +28,9 @@ class Source(Protocol):
         *,
         columns: Sequence[str] | None = None,
     ) -> "duckdb.DuckDBPyRelation":
-        """이 소스를 DuckDB relation 으로 만든다.
+        """Turn this source into a DuckDB relation.
 
-        `columns` 가 주어지면 그 컬럼만 읽는다(스캔에 pushdown). `None` 이면 전체.
+        If `columns` is given, read only those columns (pushed down to the scan).
+        If `None`, read everything.
         """
         ...

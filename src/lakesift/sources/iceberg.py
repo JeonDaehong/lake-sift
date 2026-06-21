@@ -1,11 +1,11 @@
-"""Iceberg 소스 어댑터 (v0.3) — PyIceberg 로 스냅샷을 읽는다.
+"""Iceberg source adapter (v0.3) — reads a snapshot via PyIceberg.
 
-코어/렌더러는 그대로. PyIceberg `Table` 을 받아 scan → Arrow → DuckDB relation 으로
-넘긴다. 스캔은 현재 Arrow 로 전량 materialize 한다(단일 노드 도구라 허용) — 큰
-테이블은 `row_filter`/`selected_fields` 로 미리 줄여라. diff 출력 자체는 여전히
-스트리밍된다.
+The core/renderers are unchanged. Takes a PyIceberg `Table`, scans it -> Arrow -> hands
+it to DuckDB as a relation. The scan currently materializes the whole table into Arrow
+(allowed for a single-node tool) — narrow large tables ahead of time with
+`row_filter`/`selected_fields`. The diff output itself is still streamed.
 
-pyiceberg 는 선택 의존성: `pip install "lake-sift[iceberg]"`.
+pyiceberg is an optional dependency: `pip install "lake-sift[iceberg]"`.
 """
 
 from __future__ import annotations
@@ -20,17 +20,17 @@ if TYPE_CHECKING:
 def _require_pyiceberg() -> None:
     try:
         import pyiceberg  # noqa: F401
-    except ImportError as e:  # pragma: no cover - 설치 안 된 환경에서만
+    except ImportError as e:  # pragma: no cover - only in environments without it installed
         raise ImportError(
-            'Iceberg 소스는 pyiceberg 가 필요합니다: pip install "lake-sift[iceberg]"'
+            'The Iceberg source requires pyiceberg: pip install "lake-sift[iceberg]"'
         ) from e
 
 
 class IcebergSource:
-    """PyIceberg `Table` 을 DuckDB relation 으로 읽는다.
+    """Reads a PyIceberg `Table` into a DuckDB relation.
 
-    이미 로드한 Table 을 직접 넘기거나(`IcebergSource(table)`), 카탈로그에서
-    이름으로 로드한다(`IcebergSource.from_catalog(...)`).
+    Pass an already-loaded Table directly (`IcebergSource(table)`), or load one from a
+    catalog by name (`IcebergSource.from_catalog(...)`).
     """
 
     def __init__(
@@ -57,9 +57,10 @@ class IcebergSource:
         selected_fields: Sequence[str] | None = None,
         **properties: Any,
     ) -> "IcebergSource":
-        """카탈로그(REST/Glue/SQL 등)에서 `identifier` 테이블을 로드한다.
+        """Load the `identifier` table from a catalog (REST/Glue/SQL/etc.).
 
-        `properties` 는 pyiceberg `load_catalog` 로 그대로 전달된다(uri, credential 등).
+        `properties` is passed straight through to pyiceberg `load_catalog` (uri,
+        credentials, etc.).
         """
         _require_pyiceberg()
         from pyiceberg.catalog import load_catalog
@@ -73,7 +74,7 @@ class IcebergSource:
         )
 
     def arrow_schema(self) -> Any:
-        """데이터를 읽지 않고 테이블 스키마만 Arrow 스키마로 돌려준다(메타데이터)."""
+        """Return the table schema as an Arrow schema without reading data (metadata)."""
         _require_pyiceberg()
         from pyiceberg.io.pyarrow import schema_to_pyarrow
 
@@ -86,12 +87,12 @@ class IcebergSource:
         columns: Sequence[str] | None = None,
     ) -> "duckdb.DuckDBPyRelation":
         _require_pyiceberg()
-        # 코어가 넘긴 projection 이 있으면 그걸로, 없으면 생성 시 지정한 필드.
+        # Use the projection passed by the core if any; otherwise the fields set at construction.
         fields = tuple(columns) if columns is not None else self.selected_fields
         kwargs: dict[str, Any] = {"selected_fields": fields}
         if self.snapshot_id is not None:
             kwargs["snapshot_id"] = self.snapshot_id
-        if self.row_filter is not None:  # None 이면 scan 기본값(ALWAYS_TRUE) 사용
+        if self.row_filter is not None:  # None -> use the scan default (ALWAYS_TRUE)
             kwargs["row_filter"] = self.row_filter
         arrow = self.table.scan(**kwargs).to_arrow()
         return con.from_arrow(arrow)

@@ -1,4 +1,4 @@
-"""기계 소비용 JSON 출력. (파일명은 stdlib `json` 섀도잉 회피용.)"""
+"""Machine-consumable JSON output. (Module name avoids shadowing stdlib `json`.)"""
 
 from __future__ import annotations
 

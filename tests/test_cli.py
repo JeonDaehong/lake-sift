@@ -1,4 +1,4 @@
-"""CLI 동작 검증 — exit code 규약(0/1/2)과 플래그."""
+"""CLI behavior — the exit-code convention (0/1/2) and flags."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def test_exit_1_when_diff(tmp_path):
 def test_exit_2_when_missing_key_option(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
     b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})
-    r = runner.invoke(app, [a, b])  # --key 없음
+    r = runner.invoke(app, [a, b])  # no --key
     assert r.exit_code == 2
 
 
@@ -70,9 +70,9 @@ def test_json_output_is_valid(tmp_path):
 def test_tolerance_flag(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1], "v": [1.00]})
     b = _write(tmp_path / "b.parquet", {"id": [1], "v": [1.02]})
-    # tol 0.1 이내 → 동일(exit 0)
+    # within tol 0.1 -> identical (exit 0)
     assert runner.invoke(app, [a, b, "-k", "id", "-t", "0.1"]).exit_code == 0
-    # tol 없으면 변경(exit 1)
+    # without tol -> changed (exit 1)
     assert runner.invoke(app, [a, b, "-k", "id"]).exit_code == 1
 
 
@@ -88,28 +88,28 @@ def test_sample_limits_human_output(tmp_path):
     b = _write(tmp_path / "b.parquet", {"id": [1, 2, 3], "v": ["A", "B", "C"]})
     r = runner.invoke(app, [a, b, "-k", "id", "-n", "1"])
     assert r.exit_code == 1
-    assert "외 2건" in r.stdout  # 3개 중 1개만 보이고 나머지 절단
+    assert "+2 more" in r.stdout  # only 1 of 3 shown, the rest truncated
 
 
 def test_top_columns_shown_and_toggle(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1, 2], "a": ["x", "x"], "b": ["p", "q"]})
     b = _write(tmp_path / "b.parquet", {"id": [1, 2], "a": ["X", "Y"], "b": ["p", "q"]})
     r = runner.invoke(app, [a, b, "-k", "id"])
-    assert "상위 컬럼" in r.stdout and "a (2)" in r.stdout
-    # --top 0 으로 끄면 안 보임
+    assert "top changed columns" in r.stdout and "a (2)" in r.stdout
+    # turning it off with --top 0 hides it
     r0 = runner.invoke(app, [a, b, "-k", "id", "--top", "0"])
-    assert "상위 컬럼" not in r0.stdout
+    assert "top changed columns" not in r0.stdout
 
 
 def test_columns_filter(tmp_path):
-    # b 만 바뀌는데 --columns a 로 a 만 비교 → 동일 취급(exit 0)
+    # only b changes, but --columns a compares only a -> treated as identical (exit 0)
     a = _write(tmp_path / "a.parquet", {"id": [1], "a": ["x"], "b": ["p"]})
     b = _write(tmp_path / "b.parquet", {"id": [1], "a": ["x"], "b": ["q"]})
     assert runner.invoke(app, [a, b, "-k", "id", "-c", "a"]).exit_code == 0
     assert runner.invoke(app, [a, b, "-k", "id"]).exit_code == 1
 
 
-# --- 소스 스펙 파싱 (_source) -------------------------------------------------
+# --- source spec parsing (_source) -------------------------------------------
 
 
 def test_source_defaults_to_parquet():
@@ -122,7 +122,7 @@ def test_source_iceberg_parses_catalog_identifier_and_snapshot(monkeypatch):
 
     def fake_from_catalog(catalog, identifier, *, snapshot_id=None):
         captured.update(catalog=catalog, identifier=identifier, snapshot_id=snapshot_id)
-        return object()  # 실제 카탈로그 접속 없이 인자만 검증
+        return object()  # validate the args without an actual catalog connection
 
     monkeypatch.setattr(
         "lakesift.cli.IcebergSource.from_catalog", staticmethod(fake_from_catalog)
@@ -130,13 +130,13 @@ def test_source_iceberg_parses_catalog_identifier_and_snapshot(monkeypatch):
     _source("iceberg:prod/sales.orders@123")
     assert captured == {"catalog": "prod", "identifier": "sales.orders", "snapshot_id": 123}
 
-    _source("iceberg:prod/sales.orders")  # snapshot 생략 → None
+    _source("iceberg:prod/sales.orders")  # snapshot omitted -> None
     assert captured["snapshot_id"] is None
 
 
 def test_source_iceberg_bad_format_raises():
     with pytest.raises(DiffError):
-        _source("iceberg:no-slash")  # catalog/identifier 구분자 없음
+        _source("iceberg:no-slash")  # no catalog/identifier separator
 
 
 def test_source_iceberg_non_integer_snapshot_raises():
@@ -149,7 +149,7 @@ def test_source_delta_parses_path_and_version():
     assert isinstance(src, DeltaSource)
     assert src.table == "/data/my_table" and src.version == 5
 
-    src2 = _source("delta:s3://bucket/t")  # version 생략 → None, URI 보존
+    src2 = _source("delta:s3://bucket/t")  # version omitted -> None, URI preserved
     assert isinstance(src2, DeltaSource)
     assert src2.table == "s3://bucket/t" and src2.version is None
 
