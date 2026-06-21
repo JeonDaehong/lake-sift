@@ -88,6 +88,14 @@ lake-sift prod.parquet pr.parquet -k id || echo "data change detected!"
 Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--summary`,
 `--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`, `--sample/-n`, `--top`.
 
+**Column projection (pushdown).** When you narrow the comparison with `--columns`
+or `--exclude`, lake-sift reads only the key plus the compared columns from each
+source — pushed down to the scan, so Iceberg/Delta/Parquet never materialize
+columns you don't compare. A consequence: added/removed rows then show only those
+columns. Schema changes are still detected across the *full* schema (read from
+metadata), so a dropped or retyped column is reported even when it isn't compared.
+Without these flags, the full rows are read and shown as before.
+
 ### Iceberg snapshots
 
 Either operand may be an Iceberg table instead of a file, using the form

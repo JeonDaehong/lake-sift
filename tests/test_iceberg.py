@@ -47,6 +47,28 @@ def test_iceberg_identical_is_empty(tmp_path):
         assert r.is_empty()
 
 
+def test_iceberg_arrow_schema_is_metadata_only(tmp_path):
+    t = _ice(tmp_path, "s", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["b"]}))
+    assert set(IcebergSource(t).arrow_schema().names) == {"id", "v", "w"}
+
+
+def test_iceberg_to_relation_projection(tmp_path):
+    import duckdb
+
+    t = _ice(tmp_path, "p", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["b"]}))
+    con = duckdb.connect()
+    assert IcebergSource(t).to_relation(con, columns=["id", "w"]).columns == ["id", "w"]
+
+
+def test_iceberg_columns_pushdown_projects_rows(tmp_path):
+    """--columns 로 비교하면 added 행도 key+비교대상만 보인다(pushdown)."""
+    left = _ice(tmp_path, "pl", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["x"]}))
+    right = _ice(tmp_path, "pr", pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"], "w": ["x", "y"]}))
+    with diff(IcebergSource(left), IcebergSource(right), key=["id"], columns=["v"]) as r:
+        added = list(r.added)
+    assert added and set(added[0].keys()) == {"id", "v"}
+
+
 def test_iceberg_vs_parquet(tmp_path):
     """소스 혼합: 왼쪽 iceberg, 오른쪽 parquet 도 동일 코어로 비교된다."""
     import pyarrow.parquet as pq

@@ -65,9 +65,20 @@ class DeltaSource:
             storage_options=self.storage_options,
         )
 
-    def to_relation(self, con: "duckdb.DuckDBPyConnection") -> "duckdb.DuckDBPyRelation":
+    def arrow_schema(self) -> Any:
+        """데이터를 읽지 않고 테이블 스키마만 Arrow 스키마로 돌려준다(메타데이터)."""
+        return self._load().schema().to_arrow()
+
+    def to_relation(
+        self,
+        con: "duckdb.DuckDBPyConnection",
+        *,
+        columns: Sequence[str] | None = None,
+    ) -> "duckdb.DuckDBPyRelation":
         dt = self._load()
-        arrow = dt.to_pyarrow_table(columns=self.columns, filters=self.filters)
+        # 코어가 넘긴 projection 이 있으면 그걸로, 없으면 생성 시 지정한 컬럼.
+        cols = list(columns) if columns is not None else self.columns
+        arrow = dt.to_pyarrow_table(columns=cols, filters=self.filters)
         return con.from_arrow(arrow)
 
     def __repr__(self) -> str:  # pragma: no cover

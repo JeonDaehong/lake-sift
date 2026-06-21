@@ -49,6 +49,28 @@ def test_delta_time_travel_version(tmp_path):
         assert len(cells) == 1 and cells[0].old == "b" and cells[0].new == "B"
 
 
+def test_delta_arrow_schema_is_metadata_only(tmp_path):
+    path = _delta(tmp_path, "s", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["b"]}))
+    assert set(DeltaSource(path).arrow_schema().names) == {"id", "v", "w"}
+
+
+def test_delta_to_relation_projection(tmp_path):
+    import duckdb
+
+    path = _delta(tmp_path, "p", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["b"]}))
+    con = duckdb.connect()
+    assert DeltaSource(path).to_relation(con, columns=["id", "w"]).columns == ["id", "w"]
+
+
+def test_delta_columns_pushdown_projects_rows(tmp_path):
+    """--columns 로 비교하면 added 행도 key+비교대상만 보인다(pushdown)."""
+    left = _delta(tmp_path, "pl", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"], "w": ["x"]}))
+    right = _delta(tmp_path, "pr", pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"], "w": ["x", "y"]}))
+    with diff(DeltaSource(left), DeltaSource(right), key=["id"], columns=["v"]) as r:
+        added = list(r.added)
+    assert added and set(added[0].keys()) == {"id", "v"}
+
+
 def test_delta_vs_parquet(tmp_path):
     """소스 혼합: 왼쪽 delta, 오른쪽 parquet 도 동일 코어로 비교된다."""
     import pyarrow.parquet as pq

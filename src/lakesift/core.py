@@ -38,6 +38,20 @@ def _schema_of(rel: "duckdb.DuckDBPyRelation") -> dict[str, str]:
     return {name: str(t) for name, t in zip(rel.columns, rel.types)}
 
 
+def _probe_schema(con, source: "Source") -> dict[str, str]:
+    """데이터를 읽지 않고(가능하면) 소스의 컬럼명 → 타입을 가져온다.
+
+    소스가 `arrow_schema()` 를 제공하면 빈 Arrow 테이블로 DuckDB 타입을 뽑는다
+    (Iceberg/Delta: 메타데이터만, 전량 스캔 없이). 없으면 `to_relation` 의 relation
+    에서 읽는다(Parquet 은 lazy 라 footer 만 읽어 싸다). 어느 쪽이든 타입 문자열은
+    DuckDB 표현으로 통일돼 좌/우 비교가 일관된다.
+    """
+    arrow_schema = getattr(source, "arrow_schema", None)
+    if arrow_schema is not None:
+        return _schema_of(con.from_arrow(arrow_schema().empty_table()))
+    return _schema_of(source.to_relation(con))
+
+
 def _has_duplicate_keys(con, view: str, key: Sequence[str]) -> bool:
     cols = ", ".join(_q(k) for k in key)
     sql = f"SELECT 1 FROM {view} GROUP BY {cols} HAVING count(*) > 1 LIMIT 1"
@@ -153,15 +167,22 @@ def diff(
 
     exclude_set = set(exclude or [])
     columns_filter = set(columns) if columns else None
+    # projection 은 사용자가 비교 범위를 좁혔을 때만(--columns/--exclude) 활성화한다.
+    # 활성 시 key+비교대상 컬럼만 스캔에 내려보내(pushdown) 안 쓰는 컬럼은 읽지 않는다.
+    # 부작용: added/removed 행도 그 컬럼들만 보인다(스키마 변경 감지는 전체 스키마 기준).
+    projection_active = columns_filter is not None or bool(exclude_set)
 
     con = duckdb.connect()  # in-memory; 성공 시 DiffResult 가 소유권을 넘겨받는다.
     try:
-        lrel = left.to_relation(con)
-        rrel = right.to_relation(con)
-        lschema = _schema_of(lrel)
-        rschema = _schema_of(rrel)
-        lrel.create_view("l", replace=True)
-        rrel.create_view("r", replace=True)
+        if projection_active:
+            # 데이터 materialize 전에 스키마부터 싸게 확보해 읽을 컬럼을 결정한다.
+            lschema = _probe_schema(con, left)
+            rschema = _probe_schema(con, right)
+        else:
+            lrel = left.to_relation(con)
+            rrel = right.to_relation(con)
+            lschema = _schema_of(lrel)
+            rschema = _schema_of(rrel)
 
         # --- key 검증 ---
         missing = [k for k in key if k not in lschema or k not in rschema]
@@ -181,14 +202,6 @@ def diff(
             if col not in lschema:
                 schema_changes.append(SchemaChange(col, "added", new_type=t))
 
-        # --- 중복 key ---
-        if not allow_duplicates:
-            for view, label in (("l", "left"), ("r", "right")):
-                if _has_duplicate_keys(con, view, key):
-                    raise DiffError(
-                        f"{label} 에 중복 key 가 있습니다. --allow-duplicates 로 우회 가능."
-                    )
-
         # --- 비교 대상 컬럼: 공통 컬럼 - key - exclude (columns 지정 시 그걸로 제한) ---
         common = [c for c in lschema if c in rschema]
         compare_cols = [
@@ -198,6 +211,24 @@ def diff(
             and c not in exclude_set
             and (columns_filter is None or c in columns_filter)
         ]
+
+        # --- relation materialize + 뷰 등록 ---
+        # projection 활성 시 여기서 key+비교대상만 스캔한다(pushdown). 비활성이면
+        # 위에서 이미 전체를 materialize 했다.
+        if projection_active:
+            proj = key + compare_cols  # compare_cols 는 key 를 제외하므로 중복 없음
+            lrel = left.to_relation(con, columns=proj)
+            rrel = right.to_relation(con, columns=proj)
+        lrel.create_view("l", replace=True)
+        rrel.create_view("r", replace=True)
+
+        # --- 중복 key ---
+        if not allow_duplicates:
+            for view, label in (("l", "left"), ("r", "right")):
+                if _has_duplicate_keys(con, view, key):
+                    raise DiffError(
+                        f"{label} 에 중복 key 가 있습니다. --allow-duplicates 로 우회 가능."
+                    )
 
         key_join = " AND ".join(f"l.{_q(k)} IS NOT DISTINCT FROM r.{_q(k)}" for k in key)
 

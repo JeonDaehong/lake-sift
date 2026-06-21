@@ -72,9 +72,23 @@ class IcebergSource:
             selected_fields=selected_fields,
         )
 
-    def to_relation(self, con: "duckdb.DuckDBPyConnection") -> "duckdb.DuckDBPyRelation":
+    def arrow_schema(self) -> Any:
+        """데이터를 읽지 않고 테이블 스키마만 Arrow 스키마로 돌려준다(메타데이터)."""
         _require_pyiceberg()
-        kwargs: dict[str, Any] = {"selected_fields": self.selected_fields}
+        from pyiceberg.io.pyarrow import schema_to_pyarrow
+
+        return schema_to_pyarrow(self.table.schema())
+
+    def to_relation(
+        self,
+        con: "duckdb.DuckDBPyConnection",
+        *,
+        columns: Sequence[str] | None = None,
+    ) -> "duckdb.DuckDBPyRelation":
+        _require_pyiceberg()
+        # 코어가 넘긴 projection 이 있으면 그걸로, 없으면 생성 시 지정한 필드.
+        fields = tuple(columns) if columns is not None else self.selected_fields
+        kwargs: dict[str, Any] = {"selected_fields": fields}
         if self.snapshot_id is not None:
             kwargs["snapshot_id"] = self.snapshot_id
         if self.row_filter is not None:  # None 이면 scan 기본값(ALWAYS_TRUE) 사용
