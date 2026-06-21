@@ -8,8 +8,8 @@
 
 `lake-sift` compares two datasets down to the individual cell — on a single node,
 with **no Spark, no warehouse, and no framework lock-in**. It diffs Parquet files
-and Iceberg snapshots today, mixing the two freely; the same engine extends to
-Delta versions through pluggable source adapters (see the [roadmap](#roadmap)).
+Iceberg snapshots, and Delta versions today, mixing them freely through
+pluggable source adapters (see the [roadmap](#roadmap)).
 
 ```console
 $ lake-sift a.parquet b.parquet --key id
@@ -56,6 +56,7 @@ format-native · review-oriented output.
 ```bash
 pip install lake-sift             # once published to PyPI
 pip install "lake-sift[iceberg]"  # with the Iceberg source (PyIceberg)
+pip install "lake-sift[delta]"    # with the Delta source (delta-rs)
 ```
 
 Until the first PyPI release, install from source:
@@ -66,8 +67,8 @@ cd lake-sift
 pip install -e ".[dev]"
 ```
 
-Requires Python 3.10+. The Iceberg source is an optional extra — Parquet diffing
-needs no extra dependencies.
+Requires Python 3.10+. The Iceberg and Delta sources are optional extras —
+Parquet diffing needs no extra dependencies.
 
 ## Usage
 
@@ -106,6 +107,25 @@ lake-sift export.parquet "iceberg:prod/sales.orders" -k order_id
 Requires the `iceberg` extra (`pip install "lake-sift[iceberg]"`). For finer
 control (row filters, field projection, an already-loaded table) use
 `IcebergSource` from the Python API.
+
+### Delta tables
+
+Either operand may be a Delta Lake table, using the form
+`delta:<path-or-uri>[@<version>]`. The path is a local directory or any URI
+delta-rs understands (`s3://`, `abfs://`, …); `@<version>` pins a table version
+for time travel.
+
+```bash
+# Diff two versions of the same Delta table (audit a change)
+lake-sift "delta:/data/sales@11" "delta:/data/sales@12" -k order_id
+
+# Mix sources freely: validate a Parquet export against a cloud Delta table
+lake-sift export.parquet "delta:s3://lake/sales" -k order_id
+```
+
+Requires the `delta` extra (`pip install "lake-sift[delta]"`). For finer control
+(column projection, predicate filters, storage credentials, an already-loaded
+table) use `DeltaSource` from the Python API.
 
 ### Python API
 
@@ -147,6 +167,23 @@ with diff(left, right, key=["order_id"]) as result:
     print(result.summary())
 ```
 
+`DeltaSource` reads a table through delta-rs and accepts a path/URI or an
+already-loaded `DeltaTable`, with optional version time travel, column
+projection, predicate filters, and storage credentials:
+
+```python
+from lakesift import diff, DeltaSource
+
+left = DeltaSource("/data/sales", version=11)
+right = DeltaSource(
+    "/data/sales", version=12,
+    columns=["order_id", "amount", "status"],  # project before diffing
+)
+
+with diff(left, right, key=["order_id"]) as result:
+    print(result.summary())
+```
+
 ### Exit codes
 
 | Code | Meaning |
@@ -161,8 +198,8 @@ with diff(left, right, key=["order_id"]) as result:
 |---|---|
 | v0.1 | Parquet MVP — schema/row/cell diff, CLI, exit codes |
 | v0.2 | numeric tolerance, ignore-case, `--sample`, top-k changed columns |
-| **v0.3** | **Iceberg snapshot source** (PyIceberg) — same core, new adapter *(current)* |
-| v0.4 | Delta version source (delta-rs) |
+| v0.3 | Iceberg snapshot source (PyIceberg) — same core, new adapter |
+| **v0.4** | **Delta version source** (delta-rs) — same core, new adapter *(current)* |
 | v0.5 | HTML report, GitHub Action |
 | v1.0 | stable API + documentation site |
 
@@ -180,7 +217,7 @@ lake-sift/
 ├── src/lakesift/
 │   ├── core.py          # diff engine (DuckDB SQL generation/execution)
 │   ├── result.py        # DiffResult, CellChange, SchemaChange
-│   ├── sources/         # input adapters (parquet today; iceberg/delta next)
+│   ├── sources/         # input adapters (parquet, iceberg, delta)
 │   ├── render/          # human (color) and json renderers
 │   └── cli.py           # typer CLI
 └── tests/

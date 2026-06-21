@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from lakesift.cli import _source, app
 from lakesift.core import DiffError
+from lakesift.sources.delta import DeltaSource
 from lakesift.sources.parquet import ParquetSource
 
 runner = CliRunner()
@@ -141,3 +142,23 @@ def test_source_iceberg_bad_format_raises():
 def test_source_iceberg_non_integer_snapshot_raises():
     with pytest.raises(DiffError):
         _source("iceberg:prod/sales.orders@latest")
+
+
+def test_source_delta_parses_path_and_version():
+    src = _source("delta:/data/my_table@5")
+    assert isinstance(src, DeltaSource)
+    assert src.table == "/data/my_table" and src.version == 5
+
+    src2 = _source("delta:s3://bucket/t")  # version 생략 → None, URI 보존
+    assert isinstance(src2, DeltaSource)
+    assert src2.table == "s3://bucket/t" and src2.version is None
+
+
+def test_source_delta_non_integer_version_raises():
+    with pytest.raises(DiffError):
+        _source("delta:/data/my_table@latest")
+
+
+def test_source_delta_empty_path_raises():
+    with pytest.raises(DiffError):
+        _source("delta:@5")
