@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lake-sift"
-version = "0.1.0.dev0"
-description = "값 단위(value-level) 데이터 diff — 두 Parquet 파일을 Spark·웨어하우스 없이 셀 단위로 비교"
+version = "0.4.0"
+description = "Value-level data diff for the lakehouse — compare Parquet, Iceberg, and Delta down to the cell, no Spark or warehouse"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "JeonDaehong", email = "daehong770@gmail.com" }]
-keywords = ["diff", "parquet", "duckdb", "data", "lakehouse"]
+keywords = ["diff", "parquet", "iceberg", "delta", "duckdb", "data", "lakehouse"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: MIT License",
