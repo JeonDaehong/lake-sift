@@ -69,6 +69,25 @@ def test_iceberg_columns_pushdown_projects_rows(tmp_path):
     assert added and set(added[0].keys()) == {"id", "v"}
 
 
+def test_iceberg_branch_diff_wap(tmp_path):
+    """Write-Audit-Publish: diff a staging branch against main before merging."""
+    t = _ice(tmp_path, "wap", pa.table({"id": pa.array([1, 2, 3], pa.int64()), "status": ["paid", "pending", "paid"]}))
+    main_snap = t.current_snapshot().snapshot_id
+    t.manage_snapshots().create_branch(main_snap, "staging").commit()
+    t.refresh()
+    # the audited write lands only on the staging branch
+    t.append(pa.table({"id": pa.array([4], pa.int64()), "status": ["new"]}), branch="staging")
+    t.refresh()
+
+    main = IcebergSource(t, ref="main")
+    staging = IcebergSource(t, ref="staging")
+    with diff(main, staging, key=["id"]) as r:
+        # staging adds order 4 and nothing else changed
+        assert [row["id"] for row in r.added] == [4]
+        assert list(r.removed) == []
+        assert r.summary()["changed_cells"] == 0
+
+
 def test_iceberg_vs_parquet(tmp_path):
     """Mixed sources: left iceberg, right parquet are compared by the same core."""
     import pyarrow.parquet as pq

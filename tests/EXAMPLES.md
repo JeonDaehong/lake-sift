@@ -277,7 +277,32 @@ lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k o
 lake-sift export.parquet "iceberg:prod/sales.orders" -k order_id
 ```
 
-출력 형식은 위 Parquet 예제들과 동일하다(같은 diff 코어).
+`@` 뒤가 정수면 snapshot id, 그 외는 **브랜치/태그 이름**으로 해석된다. 출력 형식은
+위 Parquet 예제들과 동일하다(같은 diff 코어).
+
+## 14-1. Write-Audit-Publish (WAP) — Iceberg 브랜치 감사 게이트
+
+레이크하우스에서 변경을 **스테이징 브랜치에 쓰고(Write) → main 과 diff 해서 검증하고
+(Audit) → 의도한 변경만 있으면 머지(Publish)** 하는 패턴. lake-sift 가 그 Audit 단계다.
+`@main` / `@staging` 처럼 브랜치 이름을 그대로 쓴다.
+
+```bash
+# 머지 전에 staging 브랜치를 main 과 비교 — 차이가 있으면(exit 1) publish 보류
+lake-sift "iceberg:prod/sales.orders@main" "iceberg:prod/sales.orders@staging" -k order_id \
+  || echo "staging 이 main 과 다름 — publish 전에 검토"
+```
+
+예: staging 브랜치에 주문 하나(`order_id=4`)만 추가됐다면 —
+
+```text
++1 added  -0 removed  ~0 changed rows (0 cells)
++ order_id=4, status='new'
+exit: 1
+```
+
+종료 코드(0/1)로 CI·오케스트레이터에서 publish 를 막는 게이트로 쓴다. 실제 머지
+(fast-forward)는 카탈로그 관리 영역이라 lake-sift 밖이다. (Delta 는 네이티브 브랜치가
+없어 [버전 타임트래블](#12-delta-lake--버전-간-타임트래블)로 같은 검증을 한다.)
 
 ---
 

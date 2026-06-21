@@ -48,19 +48,23 @@ def _source(spec: str) -> Source:
 
 
 def _iceberg_source(rest: str) -> IcebergSource:
+    # After '@': an integer is a snapshot id, anything else is a branch/tag ref name.
     snapshot_id: int | None = None
+    ref: str | None = None
     if "@" in rest:
-        rest, _, snap = rest.rpartition("@")
+        rest, _, token = rest.rpartition("@")
+        if not token:
+            raise DiffError("Iceberg ref/snapshot after '@' is empty.")
         try:
-            snapshot_id = int(snap)
+            snapshot_id = int(token)
         except ValueError:
-            raise DiffError(f"Iceberg snapshot id must be an integer: {snap!r}")
+            ref = token  # non-integer -> a branch or tag name
     catalog, sep, identifier = rest.partition("/")
     if not sep or not catalog or not identifier:
         raise DiffError(
-            "Iceberg source format: iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]"
+            "Iceberg source format: iceberg:<catalog>/<namespace>.<table>[@<snapshot_id-or-ref>]"
         )
-    return IcebergSource.from_catalog(catalog, identifier, snapshot_id=snapshot_id)
+    return IcebergSource.from_catalog(catalog, identifier, snapshot_id=snapshot_id, ref=ref)
 
 
 def _delta_source(rest: str) -> DeltaSource:
@@ -80,11 +84,11 @@ def _delta_source(rest: str) -> DeltaSource:
 def main(
     left: str = typer.Argument(
         ...,
-        help="Base (before) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap>] · delta:<path>[@<ver>]",
+        help="Base (before) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap|ref>] · delta:<path>[@<ver>]",
     ),
     right: str = typer.Argument(
         ...,
-        help="Compared (after) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap>] · delta:<path>[@<ver>]",
+        help="Compared (after) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap|ref>] · delta:<path>[@<ver>]",
     ),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Row identity key (comma-separated)"),
     exclude: Optional[str] = typer.Option(None, "--exclude", "-x", help="Columns to exclude from comparison"),

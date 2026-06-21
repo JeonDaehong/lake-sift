@@ -98,11 +98,12 @@ columns. Schema changes are still detected across the *full* schema (read from
 metadata), so a dropped or retyped column is reported even when it isn't compared.
 Without these flags, the full rows are read and shown as before.
 
-### Iceberg snapshots
+### Iceberg snapshots & branches
 
 Either operand may be an Iceberg table instead of a file, using the form
-`iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]`. Catalog connection
-details are read from PyIceberg's standard config
+`iceberg:<catalog>/<namespace>.<table>[@<snapshot_id-or-ref>]`. After `@`, an
+integer is a snapshot id and anything else is a **branch or tag name**. Catalog
+connection details are read from PyIceberg's standard config
 ([`~/.pyiceberg.yaml`](https://py.iceberg.apache.org/configuration/) or
 `PYICEBERG_*` environment variables) — lake-sift only references a catalog by name.
 
@@ -114,8 +115,18 @@ lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k o
 lake-sift export.parquet "iceberg:prod/sales.orders" -k order_id
 ```
 
+**Write-Audit-Publish (WAP).** Write your changes to a staging branch, audit them by
+diffing against `main`, and only publish (merge) if the diff is what you expect. The
+non-zero exit code makes this a CI/orchestration gate:
+
+```bash
+# Audit the staging branch before merging it into main
+lake-sift "iceberg:prod/sales.orders@main" "iceberg:prod/sales.orders@staging" -k order_id \
+  || echo "staging differs from main — review before publishing"
+```
+
 Requires the `iceberg` extra (`pip install "lake-sift[iceberg]"`). For finer
-control (row filters, field projection, an already-loaded table) use
+control (branch/tag `ref`, row filters, field projection, an already-loaded table) use
 `IcebergSource` from the Python API.
 
 ### Delta tables
@@ -163,20 +174,21 @@ with diff(
     result.to_json()
 ```
 
-`IcebergSource` reads a snapshot through PyIceberg and accepts a loaded table
-directly, or loads one from a catalog — with optional snapshot pinning, row
-filter, and field projection pushed down to the scan:
+`IcebergSource` reads through PyIceberg and accepts a loaded table directly, or loads
+one from a catalog — with optional snapshot pinning, **branch/tag `ref`** (for
+Write-Audit-Publish), row filter, and field projection pushed down to the scan:
 
 ```python
 from lakesift import diff, IcebergSource
 
-left = IcebergSource.from_catalog("prod", "sales.orders", snapshot_id=1001)
-right = IcebergSource.from_catalog(
-    "prod", "sales.orders", snapshot_id=1042,
+# Audit a staging branch against main before publishing (WAP)
+main = IcebergSource.from_catalog("prod", "sales.orders", ref="main")
+staging = IcebergSource.from_catalog(
+    "prod", "sales.orders", ref="staging",
     row_filter="region = 'EU'",          # narrow the scan before diffing
 )
 
-with diff(left, right, key=["order_id"]) as result:
+with diff(main, staging, key=["order_id"]) as result:
     print(result.summary())
 ```
 

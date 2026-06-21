@@ -38,11 +38,16 @@ class IcebergSource:
         table: "Table",
         *,
         snapshot_id: int | None = None,
+        ref: str | None = None,
         row_filter: Any = None,
         selected_fields: Sequence[str] | None = None,
     ):
         self.table = table
         self.snapshot_id = snapshot_id
+        # A named branch or tag (e.g. "staging"). Enables the Write-Audit-Publish
+        # pattern: diff a staging branch against main before merging. Mutually
+        # exclusive with snapshot_id; ref takes precedence if both are given.
+        self.ref = ref
         self.row_filter = row_filter
         self.selected_fields = tuple(selected_fields) if selected_fields else ("*",)
 
@@ -53,6 +58,7 @@ class IcebergSource:
         identifier: str,
         *,
         snapshot_id: int | None = None,
+        ref: str | None = None,
         row_filter: Any = None,
         selected_fields: Sequence[str] | None = None,
         **properties: Any,
@@ -69,6 +75,7 @@ class IcebergSource:
         return cls(
             tbl,
             snapshot_id=snapshot_id,
+            ref=ref,
             row_filter=row_filter,
             selected_fields=selected_fields,
         )
@@ -90,11 +97,15 @@ class IcebergSource:
         # Use the projection passed by the core if any; otherwise the fields set at construction.
         fields = tuple(columns) if columns is not None else self.selected_fields
         kwargs: dict[str, Any] = {"selected_fields": fields}
-        if self.snapshot_id is not None:
+        # snapshot_id is ignored when a ref is given (use_ref selects the snapshot).
+        if self.snapshot_id is not None and self.ref is None:
             kwargs["snapshot_id"] = self.snapshot_id
         if self.row_filter is not None:  # None -> use the scan default (ALWAYS_TRUE)
             kwargs["row_filter"] = self.row_filter
-        arrow = self.table.scan(**kwargs).to_arrow()
+        scan = self.table.scan(**kwargs)
+        if self.ref is not None:  # scan a named branch/tag
+            scan = scan.use_ref(self.ref)
+        arrow = scan.to_arrow()
         return con.from_arrow(arrow)
 
     def __repr__(self) -> str:  # pragma: no cover

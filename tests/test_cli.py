@@ -117,21 +117,34 @@ def test_source_defaults_to_parquet():
     assert isinstance(src, ParquetSource) and src.path == "data/a.parquet"
 
 
-def test_source_iceberg_parses_catalog_identifier_and_snapshot(monkeypatch):
-    captured = {}
-
-    def fake_from_catalog(catalog, identifier, *, snapshot_id=None):
-        captured.update(catalog=catalog, identifier=identifier, snapshot_id=snapshot_id)
+def _patch_from_catalog(monkeypatch, captured):
+    def fake_from_catalog(catalog, identifier, *, snapshot_id=None, ref=None):
+        captured.update(catalog=catalog, identifier=identifier, snapshot_id=snapshot_id, ref=ref)
         return object()  # validate the args without an actual catalog connection
 
     monkeypatch.setattr(
         "lakesift.cli.IcebergSource.from_catalog", staticmethod(fake_from_catalog)
     )
-    _source("iceberg:prod/sales.orders@123")
-    assert captured == {"catalog": "prod", "identifier": "sales.orders", "snapshot_id": 123}
 
-    _source("iceberg:prod/sales.orders")  # snapshot omitted -> None
-    assert captured["snapshot_id"] is None
+
+def test_source_iceberg_parses_catalog_identifier_and_snapshot(monkeypatch):
+    captured = {}
+    _patch_from_catalog(monkeypatch, captured)
+
+    _source("iceberg:prod/sales.orders@123")
+    assert captured == {"catalog": "prod", "identifier": "sales.orders", "snapshot_id": 123, "ref": None}
+
+    _source("iceberg:prod/sales.orders")  # snapshot/ref omitted -> both None
+    assert captured["snapshot_id"] is None and captured["ref"] is None
+
+
+def test_source_iceberg_parses_branch_or_tag_ref(monkeypatch):
+    # a non-integer after '@' is a branch/tag name (Write-Audit-Publish workflow)
+    captured = {}
+    _patch_from_catalog(monkeypatch, captured)
+
+    _source("iceberg:prod/sales.orders@staging")
+    assert captured["ref"] == "staging" and captured["snapshot_id"] is None
 
 
 def test_source_iceberg_bad_format_raises():
@@ -139,9 +152,9 @@ def test_source_iceberg_bad_format_raises():
         _source("iceberg:no-slash")  # no catalog/identifier separator
 
 
-def test_source_iceberg_non_integer_snapshot_raises():
+def test_source_iceberg_empty_ref_raises():
     with pytest.raises(DiffError):
-        _source("iceberg:prod/sales.orders@latest")
+        _source("iceberg:prod/sales.orders@")
 
 
 def test_source_delta_parses_path_and_version():
