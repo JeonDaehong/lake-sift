@@ -12,6 +12,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
+from lakesift import __version__
 from lakesift.core import DiffError, diff
 from lakesift.render.human import render_human
 from lakesift.sources.base import Source
@@ -67,6 +68,12 @@ def _iceberg_source(rest: str) -> IcebergSource:
     return IcebergSource.from_catalog(catalog, identifier, snapshot_id=snapshot_id, ref=ref)
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"lake-sift {__version__}")
+        raise typer.Exit()
+
+
 def _delta_source(rest: str) -> DeltaSource:
     version: int | None = None
     if "@" in rest:
@@ -107,6 +114,13 @@ def main(
     ),
     top: int = typer.Option(
         5, "--top", help="Show the top K columns by changed cells (0 = off)"
+    ),
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the version and exit.",
     ),
 ) -> None:
     console = Console()

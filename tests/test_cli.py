@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 import pytest
 from typer.testing import CliRunner
 
+from lakesift import __version__
 from lakesift.cli import _source, app
 from lakesift.core import DiffError
 from lakesift.sources.delta import DeltaSource
@@ -55,6 +56,12 @@ def test_exit_2_when_file_missing(tmp_path):
     b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})
     r = runner.invoke(app, [str(tmp_path / "nope.parquet"), b, "-k", "id"])
     assert r.exit_code == 2
+
+
+def test_version_flag(tmp_path):
+    r = runner.invoke(app, ["--version"])
+    assert r.exit_code == 0
+    assert __version__ in r.stdout
 
 
 def test_json_output_is_valid(tmp_path):

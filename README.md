@@ -88,7 +88,8 @@ lake-sift prod.parquet pr.parquet -k id || echo "data change detected!"
 ```
 
 Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--summary`,
-`--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`, `--sample/-n`, `--top`.
+`--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`, `--sample/-n`, `--top`,
+`--version`.
 
 **Column projection (pushdown).** When you narrow the comparison with `--columns`
 or `--exclude`, lake-sift reads only the key plus the compared columns from each
