@@ -195,6 +195,16 @@ def diff(
         if missing:
             raise DiffError(f"key columns are not present on both sides: {missing}")
 
+        # --- columns validation ---
+        # A column requested with --columns that exists on neither side is almost always a
+        # typo. Silently dropping it would compare nothing and report "identical" (exit 0) —
+        # a dangerous false-negative for a CI gate. (A column present on only one side is a
+        # genuine schema change and is reported below, so it is allowed here.)
+        if columns_filter is not None:
+            unknown = sorted(c for c in columns_filter if c not in lschema and c not in rschema)
+            if unknown:
+                raise DiffError(f"--columns names columns present on neither side: {unknown}")
+
         # --- schema delta ---
         schema_changes: list[SchemaChange] = []
         for col, t in lschema.items():

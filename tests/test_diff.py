@@ -124,6 +124,17 @@ def test_ignore_case(tmp_path):
         assert next(r.changed_cells).key == {"id": 2}
 
 
+def test_unknown_columns_error(tmp_path):
+    # a --columns typo (column on neither side) must error, not silently pass as identical
+    a = _write(tmp_path / "a.parquet", {"id": [1], "price": [10]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "price": [11]})
+    with pytest.raises(DiffError):
+        diff(ParquetSource(a), ParquetSource(b), key=["id"], columns=["prce"])
+    # a column present on only one side is a schema change, not a typo -> allowed
+    c = _write(tmp_path / "c.parquet", {"id": [1], "qty": [1]})
+    diff(ParquetSource(a), ParquetSource(c), key=["id"], columns=["price"]).close()
+
+
 def test_missing_key_errors(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
     b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})

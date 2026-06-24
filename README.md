@@ -97,7 +97,9 @@ source — pushed down to the scan, so Iceberg/Delta/Parquet never materialize
 columns you don't compare. A consequence: added/removed rows then show only those
 columns. Schema changes are still detected across the *full* schema (read from
 metadata), so a dropped or retyped column is reported even when it isn't compared.
-Without these flags, the full rows are read and shown as before.
+Without these flags, the full rows are read and shown as before. A column named in
+`--columns` that exists on *neither* side is treated as an error (exit `2`) rather
+than silently ignored, so a typo can't quietly turn a CI gate into a no-op.
 
 ### Iceberg snapshots & branches
 

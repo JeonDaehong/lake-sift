@@ -108,6 +108,14 @@ def test_top_columns_shown_and_toggle(tmp_path):
     assert "top changed columns" not in r0.stdout
 
 
+def test_unknown_columns_exit_2(tmp_path):
+    # a --columns typo must error (exit 2), not silently report "identical" (exit 0)
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})
+    r = runner.invoke(app, [a, b, "-k", "id", "-c", "nope"])
+    assert r.exit_code == 2
+
+
 def test_columns_filter(tmp_path):
     # only b changes, but --columns a compares only a -> treated as identical (exit 0)
     a = _write(tmp_path / "a.parquet", {"id": [1], "a": ["x"], "b": ["p"]})
