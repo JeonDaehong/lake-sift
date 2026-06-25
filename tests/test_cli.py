@@ -98,6 +98,15 @@ def test_sample_limits_human_output(tmp_path):
     assert "+2 more" in r.stdout  # only 1 of 3 shown, the rest truncated
 
 
+def test_negative_sample_and_top_rejected(tmp_path):
+    # a negative --sample/--top is a usage error (a negative limit produced a bogus
+    # "+N more" count); reject it up front with exit code 2.
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["b"]})
+    assert runner.invoke(app, [a, b, "-k", "id", "-n", "-3"]).exit_code == 2
+    assert runner.invoke(app, [a, b, "-k", "id", "--top", "-1"]).exit_code == 2
+
+
 def test_top_columns_shown_and_toggle(tmp_path):
     a = _write(tmp_path / "a.parquet", {"id": [1, 2], "a": ["x", "x"], "b": ["p", "q"]})
     b = _write(tmp_path / "b.parquet", {"id": [1, 2], "a": ["X", "Y"], "b": ["p", "q"]})

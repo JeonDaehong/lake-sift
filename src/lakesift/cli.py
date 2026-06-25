@@ -110,10 +110,10 @@ def main(
         False, "--ignore-case", "-i", help="Case-insensitive comparison for text columns"
     ),
     sample: Optional[int] = typer.Option(
-        None, "--sample", "-n", help="Max rows to show per change kind in human output"
+        None, "--sample", "-n", min=0, help="Max rows to show per change kind in human output"
     ),
     top: int = typer.Option(
-        5, "--top", help="Show the top K columns by changed cells (0 = off)"
+        5, "--top", min=0, help="Show the top K columns by changed cells (0 = off)"
     ),
     version: Optional[bool] = typer.Option(
         None,
