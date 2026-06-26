@@ -11,12 +11,9 @@ from lakesift.result import DiffResult
 DEFAULT_MAX_ROWS = 20
 
 
-def _fmt_key(key: dict) -> str:
-    return ", ".join(f"{k}={v!r}" for k, v in key.items())
-
-
-def _fmt_row(row: dict) -> str:
-    return ", ".join(f"{k}={v!r}" for k, v in row.items())
+def _fmt_pairs(d: dict) -> str:
+    """Render a dict (a row, or a row's key) as `col=value` pairs."""
+    return ", ".join(f"{k}={v!r}" for k, v in d.items())
 
 
 def render_human(
@@ -76,12 +73,12 @@ def render_human(
             console.print(f"[{style}]{prefix}[/{style}] {escape(render(it))}")
             shown += 1
 
-    _emit(result.removed, s["removed"], _fmt_row, "-", "red")
-    _emit(result.added, s["added"], _fmt_row, "+", "green")
+    _emit(result.removed, s["removed"], _fmt_pairs, "-", "red")
+    _emit(result.added, s["added"], _fmt_pairs, "+", "green")
     _emit(
         result.changed_cells,
         s["changed_cells"],
-        lambda c: f"[{_fmt_key(c.key)}] {c.column}: {c.old!r} → {c.new!r}",
+        lambda c: f"[{_fmt_pairs(c.key)}] {c.column}: {c.old!r} → {c.new!r}",
         "~",
         "yellow",
     )

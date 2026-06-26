@@ -68,12 +68,6 @@ def _iceberg_source(rest: str) -> IcebergSource:
     return IcebergSource.from_catalog(catalog, identifier, snapshot_id=snapshot_id, ref=ref)
 
 
-def _version_callback(value: bool) -> None:
-    if value:
-        typer.echo(f"lake-sift {__version__}")
-        raise typer.Exit()
-
-
 def _delta_source(rest: str) -> DeltaSource:
     version: int | None = None
     if "@" in rest:
@@ -85,6 +79,12 @@ def _delta_source(rest: str) -> DeltaSource:
     if not rest:
         raise DiffError("Delta source format: delta:<path-or-uri>[@<version>]")
     return DeltaSource(rest, version=version)
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"lake-sift {__version__}")
+        raise typer.Exit()
 
 
 @app.command()
@@ -142,10 +142,9 @@ def main(
             tolerance=tolerance,
             ignore_case=ignore_case,
         )
-    except DiffError as e:
-        err.print(f"[red]error:[/red] {e}")
-        raise typer.Exit(code=2)
-    except Exception as e:  # treat read failures, etc. as comparison-not-possible
+    except Exception as e:
+        # DiffError is the expected case; any other exception (read failures, etc.) is
+        # also treated as comparison-not-possible and mapped to exit code 2.
         err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=2)
 

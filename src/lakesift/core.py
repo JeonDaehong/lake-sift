@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Sequence
 
 import duckdb
 
+from lakesift._sql import quote_identifier as _q
 from lakesift.result import CellChange, DiffResult, SchemaChange
 
 if TYPE_CHECKING:
@@ -28,11 +29,6 @@ _BATCH = 2048
 
 class DiffError(Exception):
     """An error that prevents comparison (mapped to exit code 2 in the CLI)."""
-
-
-def _q(name: str) -> str:
-    """Safely quote an identifier."""
-    return '"' + name.replace('"', '""') + '"'
 
 
 def _schema_of(rel: "duckdb.DuckDBPyRelation") -> dict[str, str]:

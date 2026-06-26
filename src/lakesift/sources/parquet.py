@@ -5,13 +5,10 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Sequence
 
+from lakesift._sql import quote_identifier as _q
+
 if TYPE_CHECKING:
     import duckdb
-
-
-def _q(name: str) -> str:
-    """Safely quote an identifier."""
-    return '"' + name.replace('"', '""') + '"'
 
 
 class ParquetSource:
