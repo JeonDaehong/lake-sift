@@ -57,6 +57,26 @@ def _has_duplicate_keys(con, view: str, key: Sequence[str]) -> bool:
     return con.execute(sql).fetchone() is not None
 
 
+def _anti_join(select: str, outer: str, inner: str, on: str) -> str:
+    """SQL selecting `outer` rows with no `on`-matching row in `inner` (the rows only
+    on the `outer` side). Used for both the added/removed counts and their streamed rows."""
+    return f"SELECT {select} FROM {outer} ANTI JOIN {inner} ON {on}"
+
+
+def _schema_changes(lschema: dict[str, str], rschema: dict[str, str]) -> list[SchemaChange]:
+    """Column-level schema delta: removed/type-changed (left order), then added (right only)."""
+    changes: list[SchemaChange] = []
+    for col, t in lschema.items():
+        if col not in rschema:
+            changes.append(SchemaChange(col, "removed", old_type=t))
+        elif rschema[col] != t:
+            changes.append(SchemaChange(col, "type_changed", old_type=t, new_type=rschema[col]))
+    for col, t in rschema.items():
+        if col not in lschema:
+            changes.append(SchemaChange(col, "added", new_type=t))
+    return changes
+
+
 # Classify DuckDB type strings (ignoring case/parameters).
 _NUMERIC_HINTS = ("INT", "DECIMAL", "NUMERIC", "DOUBLE", "FLOAT", "REAL", "HUGEINT")
 _TEXT_HINTS = ("VARCHAR", "CHAR", "TEXT", "STRING")
@@ -140,6 +160,35 @@ def _stream_cells(con, key: list[str], compare_cols: list[str], key_join: str, p
     return factory
 
 
+def _change_stats(
+    con, key_join: str, compare_cols: list[str], preds: dict[str, str]
+) -> tuple[int, int, list[tuple[str, int]]]:
+    """Compute (changed_rows, changed_cells, changed_by_column) over keys present on both sides.
+
+    A single aggregate scan yields the changed-row count plus each column's changed-cell
+    count; the per-column counts are summed for the total and sorted (desc, dropping zeros)
+    for `changed_by_column`. Returns zeros when there are no comparable columns.
+    """
+    if not compare_cols:
+        return 0, 0, []
+    any_diff = " OR ".join(f"({preds[c]})" for c in compare_cols)
+    # Pull each column's changed-cell count in the same scan (sum totals in Python).
+    per_col = ", ".join(
+        f"COALESCE(sum(({preds[c]})::INT), 0) AS col{i}" for i, c in enumerate(compare_cols)
+    )
+    row = con.execute(
+        f"SELECT count(*) FILTER (WHERE {any_diff}) AS cr, {per_col} "
+        f"FROM l JOIN r ON {key_join}"
+    ).fetchone()
+    per_counts = [int(x) for x in row[1:]]
+    changed_by_column = sorted(
+        ((c, n) for c, n in zip(compare_cols, per_counts) if n > 0),
+        key=lambda t: t[1],
+        reverse=True,
+    )
+    return int(row[0]), sum(per_counts), changed_by_column
+
+
 def diff(
     left: "Source",
     right: "Source",
@@ -202,17 +251,7 @@ def diff(
                 raise DiffError(f"--columns names columns present on neither side: {unknown}")
 
         # --- schema delta ---
-        schema_changes: list[SchemaChange] = []
-        for col, t in lschema.items():
-            if col not in rschema:
-                schema_changes.append(SchemaChange(col, "removed", old_type=t))
-            elif rschema[col] != t:
-                schema_changes.append(
-                    SchemaChange(col, "type_changed", old_type=t, new_type=rschema[col])
-                )
-        for col, t in rschema.items():
-            if col not in lschema:
-                schema_changes.append(SchemaChange(col, "added", new_type=t))
+        schema_changes = _schema_changes(lschema, rschema)
 
         # --- compared columns: common columns - key - exclude (restricted by columns if given) ---
         common = [c for c in lschema if c in rschema]
@@ -251,38 +290,15 @@ def diff(
         }
 
         # --- counts (aggregates first) — actual rows/cells are streamed on access ---
-        n_removed = con.execute(
-            f"SELECT count(*) FROM l ANTI JOIN r ON {key_join}"
-        ).fetchone()[0]
-        n_added = con.execute(
-            f"SELECT count(*) FROM r ANTI JOIN l ON {key_join}"
-        ).fetchone()[0]
+        n_removed = con.execute(_anti_join("count(*)", "l", "r", key_join)).fetchone()[0]
+        n_added = con.execute(_anti_join("count(*)", "r", "l", key_join)).fetchone()[0]
 
-        changed_rows = 0
-        n_changed_cells = 0
-        changed_by_column: list[tuple[str, int]] = []
-        if compare_cols:
-            any_diff = " OR ".join(f"({preds[c]})" for c in compare_cols)
-            # Pull each column's changed-cell count in the same scan (sum totals in Python).
-            per_col = ", ".join(
-                f"COALESCE(sum(({preds[c]})::INT), 0) AS col{i}"
-                for i, c in enumerate(compare_cols)
-            )
-            row = con.execute(
-                f"SELECT count(*) FILTER (WHERE {any_diff}) AS cr, {per_col} "
-                f"FROM l JOIN r ON {key_join}"
-            ).fetchone()
-            changed_rows = int(row[0])
-            per_counts = [int(x) for x in row[1:]]
-            n_changed_cells = sum(per_counts)
-            changed_by_column = sorted(
-                ((c, n) for c, n in zip(compare_cols, per_counts) if n > 0),
-                key=lambda t: t[1],
-                reverse=True,
-            )
+        changed_rows, n_changed_cells, changed_by_column = _change_stats(
+            con, key_join, compare_cols, preds
+        )
 
-        removed_sql = f"SELECT l.* FROM l ANTI JOIN r ON {key_join}"
-        added_sql = f"SELECT r.* FROM r ANTI JOIN l ON {key_join}"
+        removed_sql = _anti_join("l.*", "l", "r", key_join)
+        added_sql = _anti_join("r.*", "r", "l", key_join)
 
         return DiffResult(
             key=key,
