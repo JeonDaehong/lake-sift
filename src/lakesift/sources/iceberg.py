@@ -12,18 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Sequence
 
+from lakesift.sources._deps import require
+
 if TYPE_CHECKING:
     import duckdb
     from pyiceberg.table import Table
-
-
-def _require_pyiceberg() -> None:
-    try:
-        import pyiceberg  # noqa: F401
-    except ImportError as e:  # pragma: no cover - only in environments without it installed
-        raise ImportError(
-            'The Iceberg source requires pyiceberg: pip install "lake-sift[iceberg]"'
-        ) from e
 
 
 class IcebergSource:
@@ -68,7 +61,7 @@ class IcebergSource:
         `properties` is passed straight through to pyiceberg `load_catalog` (uri,
         credentials, etc.).
         """
-        _require_pyiceberg()
+        require("pyiceberg", "iceberg")
         from pyiceberg.catalog import load_catalog
 
         tbl = load_catalog(catalog, **properties).load_table(identifier)
@@ -82,7 +75,7 @@ class IcebergSource:
 
     def arrow_schema(self) -> Any:
         """Return the table schema as an Arrow schema without reading data (metadata)."""
-        _require_pyiceberg()
+        require("pyiceberg", "iceberg")
         from pyiceberg.io.pyarrow import schema_to_pyarrow
 
         return schema_to_pyarrow(self.table.schema())
@@ -93,7 +86,7 @@ class IcebergSource:
         *,
         columns: Sequence[str] | None = None,
     ) -> "duckdb.DuckDBPyRelation":
-        _require_pyiceberg()
+        require("pyiceberg", "iceberg")
         # Use the projection passed by the core if any; otherwise the fields set at construction.
         fields = tuple(columns) if columns is not None else self.selected_fields
         kwargs: dict[str, Any] = {"selected_fields": fields}

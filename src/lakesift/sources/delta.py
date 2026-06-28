@@ -13,18 +13,11 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any, Sequence
 
+from lakesift.sources._deps import require
+
 if TYPE_CHECKING:
     import duckdb
     from deltalake import DeltaTable
-
-
-def _require_deltalake() -> None:
-    try:
-        import deltalake  # noqa: F401
-    except ImportError as e:  # pragma: no cover - only in environments without it installed
-        raise ImportError(
-            'The Delta source requires deltalake: pip install "lake-sift[delta]"'
-        ) from e
 
 
 class DeltaSource:
@@ -52,7 +45,7 @@ class DeltaSource:
         self.filters = filters
 
     def _load(self) -> "DeltaTable":
-        _require_deltalake()
+        require("deltalake", "delta")
         from deltalake import DeltaTable
 
         if isinstance(self.table, DeltaTable):

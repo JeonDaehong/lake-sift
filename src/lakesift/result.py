@@ -33,6 +33,19 @@ def _fresh(src: _Rows) -> Iterator[Any]:
     return src() if callable(src) else iter(src)
 
 
+# --- JSON object shapes (shared by to_dict and the streaming write_json) ---
+def _schema_change_obj(c: "SchemaChange") -> dict[str, Any]:
+    return {"column": c.column, "kind": c.kind, "old_type": c.old_type, "new_type": c.new_type}
+
+
+def _cell_obj(c: "CellChange") -> dict[str, Any]:
+    return {"key": c.key, "column": c.column, "old": c.old, "new": c.new}
+
+
+def _col_count_obj(t: tuple[str, int]) -> dict[str, Any]:
+    return {"column": t[0], "count": t[1]}
+
+
 @dataclass(frozen=True)
 class SchemaChange:
     """A single schema delta."""
@@ -131,24 +144,11 @@ class DiffResult:
         return {
             "key": self.key,
             "summary": self.summary(),
-            "schema_changes": [
-                {
-                    "column": c.column,
-                    "kind": c.kind,
-                    "old_type": c.old_type,
-                    "new_type": c.new_type,
-                }
-                for c in self.schema_changes
-            ],
-            "changed_by_column": [
-                {"column": col, "count": n} for col, n in self.changed_by_column
-            ],
+            "schema_changes": [_schema_change_obj(c) for c in self.schema_changes],
+            "changed_by_column": [_col_count_obj(t) for t in self.changed_by_column],
             "added": list(self.added),
             "removed": list(self.removed),
-            "changed_cells": [
-                {"key": c.key, "column": c.column, "old": c.old, "new": c.new}
-                for c in self.changed_cells
-            ],
+            "changed_cells": [_cell_obj(c) for c in self.changed_cells],
         }
 
     def to_json(self, *, indent: int | None = 2) -> str:
@@ -176,26 +176,15 @@ class DiffResult:
         stream.write('"key":' + dump(self.key))
         stream.write(',"summary":' + dump(self.summary()))
         stream.write(',"schema_changes":')
-        array(
-            self.schema_changes,
-            lambda c: {
-                "column": c.column,
-                "kind": c.kind,
-                "old_type": c.old_type,
-                "new_type": c.new_type,
-            },
-        )
+        array(self.schema_changes, _schema_change_obj)
         stream.write(',"changed_by_column":')
-        array(self.changed_by_column, lambda t: {"column": t[0], "count": t[1]})
+        array(self.changed_by_column, _col_count_obj)
         stream.write(',"added":')
         array(self.added, lambda r: r)
         stream.write(',"removed":')
         array(self.removed, lambda r: r)
         stream.write(',"changed_cells":')
-        array(
-            self.changed_cells,
-            lambda c: {"key": c.key, "column": c.column, "old": c.old, "new": c.new},
-        )
+        array(self.changed_cells, _cell_obj)
         stream.write("}")
 
     # --- resource lifetime ---

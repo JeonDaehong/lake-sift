@@ -113,6 +113,15 @@ def _diff_pred(col: str, ltype: str, *, tolerance: float | None, ignore_case: bo
     return f"{lc} IS DISTINCT FROM {rc}"
 
 
+def _fetch_batched(cur) -> Iterator[tuple]:
+    """Yield rows from an executed cursor in `_BATCH`-sized fetches (bounded memory)."""
+    while True:
+        rows = cur.fetchmany(_BATCH)
+        if not rows:
+            break
+        yield from rows
+
+
 def _stream_dicts(con, sql: str):
     """Generator factory yielding each result row as a dict (fresh cursor per access)."""
 
@@ -120,12 +129,8 @@ def _stream_dicts(con, sql: str):
         cur = con.cursor()
         cur.execute(sql)
         cols = [d[0] for d in cur.description]
-        while True:
-            rows = cur.fetchmany(_BATCH)
-            if not rows:
-                break
-            for row in rows:
-                yield dict(zip(cols, row))
+        for row in _fetch_batched(cur):
+            yield dict(zip(cols, row))
 
     return factory
 
@@ -149,13 +154,9 @@ def _stream_cells(con, key: list[str], compare_cols: list[str], key_join: str, p
             )
             cur = con.cursor()
             cur.execute(sql)
-            while True:
-                rows = cur.fetchmany(_BATCH)
-                if not rows:
-                    break
-                for row in rows:
-                    keyvals = {k: row[i] for i, k in enumerate(key)}
-                    yield CellChange(key=keyvals, column=c, old=row[-2], new=row[-1])
+            for row in _fetch_batched(cur):
+                keyvals = {k: row[i] for i, k in enumerate(key)}
+                yield CellChange(key=keyvals, column=c, old=row[-2], new=row[-1])
 
     return factory
 
