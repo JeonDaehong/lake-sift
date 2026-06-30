@@ -199,3 +199,9 @@ def test_source_delta_non_integer_version_raises():
 def test_source_delta_empty_path_raises():
     with pytest.raises(DiffError):
         _source("delta:@5")
+
+
+def test_source_delta_empty_version_raises():
+    # a trailing '@' with no version is a usage error, not int('') blowing up
+    with pytest.raises(DiffError, match="after '@' is empty"):
+        _source("delta:/data/my_table@")

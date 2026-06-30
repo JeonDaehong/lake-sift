@@ -48,14 +48,26 @@ def _source(spec: str) -> Source:
     return ParquetSource(spec)
 
 
+def _split_ref(rest: str, what: str) -> tuple[str, str | None]:
+    """Split a `body@token` operand on the last '@'.
+
+    Returns `(body, token)`, or `(rest, None)` when there is no '@'. A trailing '@'
+    with nothing after it (empty token) is a usage error.
+    """
+    if "@" not in rest:
+        return rest, None
+    body, _, token = rest.rpartition("@")
+    if not token:
+        raise DiffError(f"{what} after '@' is empty.")
+    return body, token
+
+
 def _iceberg_source(rest: str) -> IcebergSource:
     # After '@': an integer is a snapshot id, anything else is a branch/tag ref name.
+    rest, token = _split_ref(rest, "Iceberg ref/snapshot")
     snapshot_id: int | None = None
     ref: str | None = None
-    if "@" in rest:
-        rest, _, token = rest.rpartition("@")
-        if not token:
-            raise DiffError("Iceberg ref/snapshot after '@' is empty.")
+    if token is not None:
         try:
             snapshot_id = int(token)
         except ValueError:
@@ -69,13 +81,13 @@ def _iceberg_source(rest: str) -> IcebergSource:
 
 
 def _delta_source(rest: str) -> DeltaSource:
+    rest, token = _split_ref(rest, "Delta version")
     version: int | None = None
-    if "@" in rest:
-        rest, _, ver = rest.rpartition("@")
+    if token is not None:
         try:
-            version = int(ver)
+            version = int(token)
         except ValueError:
-            raise DiffError(f"Delta version must be an integer: {ver!r}")
+            raise DiffError(f"Delta version must be an integer: {token!r}")
     if not rest:
         raise DiffError("Delta source format: delta:<path-or-uri>[@<version>]")
     return DeltaSource(rest, version=version)
