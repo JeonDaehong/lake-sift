@@ -82,14 +82,17 @@ _NUMERIC_HINTS = ("INT", "DECIMAL", "NUMERIC", "DOUBLE", "FLOAT", "REAL", "HUGEI
 _TEXT_HINTS = ("VARCHAR", "CHAR", "TEXT", "STRING")
 
 
-def _is_numeric(t: str) -> bool:
+def _type_matches(t: str, hints: tuple[str, ...]) -> bool:
     u = t.upper()
-    return any(h in u for h in _NUMERIC_HINTS)
+    return any(h in u for h in hints)
+
+
+def _is_numeric(t: str) -> bool:
+    return _type_matches(t, _NUMERIC_HINTS)
 
 
 def _is_text(t: str) -> bool:
-    u = t.upper()
-    return any(h in u for h in _TEXT_HINTS)
+    return _type_matches(t, _TEXT_HINTS)
 
 
 def _diff_pred(col: str, ltype: str, *, tolerance: float | None, ignore_case: bool) -> str:
