@@ -1,0 +1,139 @@
+name: "lake-sift data diff"
+description: "Diff two datasets (Parquet / Iceberg / Delta) at the cell level and gate a PR or pipeline on the result."
+author: "JeonDaehong"
+branding:
+  icon: "git-pull-request"
+  color: "blue"
+
+inputs:
+  left:
+    description: "Base (before) source — Parquet path, iceberg:<catalog>/<ns>.<table>[@<snap|ref>], or delta:<path>[@<ver>]."
+    required: true
+  right:
+    description: "Compared (after) source — same forms as `left`."
+    required: true
+  key:
+    description: "Row identity key (comma-separated column names)."
+    required: true
+  columns:
+    description: "Compare only these columns (comma-separated)."
+    required: false
+    default: ""
+  exclude:
+    description: "Columns to exclude from comparison (comma-separated)."
+    required: false
+    default: ""
+  tolerance:
+    description: "Numeric tolerance — cells are equal when abs(l - r) <= tolerance."
+    required: false
+    default: ""
+  ignore-case:
+    description: "Case-insensitive comparison for text columns."
+    required: false
+    default: "false"
+  allow-duplicates:
+    description: "Allow duplicate keys instead of erroring."
+    required: false
+    default: "false"
+  sample:
+    description: "Max rows to show per change kind in the report."
+    required: false
+    default: ""
+  extras:
+    description: "lake-sift extras to install for the source formats used, e.g. 'iceberg', 'delta', or 'iceberg,delta'. Empty installs Parquet-only."
+    required: false
+    default: ""
+  version:
+    description: "lake-sift version to install (a PyPI version specifier). Defaults to the latest release."
+    required: false
+    default: ""
+  fail-on-diff:
+    description: "Fail the step (non-zero exit) when differences are found. A comparison error always fails."
+    required: false
+    default: "true"
+  comment:
+    description: "Post/update a sticky comment with the diff report on the pull request (requires pull-requests: write and a PR context)."
+    required: false
+    default: "false"
+
+outputs:
+  diff:
+    description: "'true' when differences were found, 'false' when the datasets are identical."
+    value: ${{ steps.run.outputs.diff }}
+  exit-code:
+    description: "The lake-sift exit code (0 identical, 1 differences, 2 error)."
+    value: ${{ steps.run.outputs.exit_code }}
+  report:
+    description: "Path to the Markdown report file."
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install lake-sift
+      shell: bash
+      run: |
+        extras='${{ inputs.extras }}'
+        version='${{ inputs.version }}'
+        spec="lake-sift"
+        if [ -n "$extras" ]; then spec="lake-sift[$extras]"; fi
+        if [ -n "$version" ]; then spec="${spec}==${version}"; fi
+        python3 -m pip install --quiet --upgrade pip
+        python3 -m pip install --quiet "$spec"
+
+    - name: Run lake-sift
+      id: run
+      shell: bash
+      run: |
+        args=( "${{ inputs.left }}" "${{ inputs.right }}" --key "${{ inputs.key }}" --markdown )
+        if [ -n '${{ inputs.columns }}' ];   then args+=( --columns '${{ inputs.columns }}' ); fi
+        if [ -n '${{ inputs.exclude }}' ];   then args+=( --exclude '${{ inputs.exclude }}' ); fi
+        if [ -n '${{ inputs.tolerance }}' ]; then args+=( --tolerance '${{ inputs.tolerance }}' ); fi
+        if [ -n '${{ inputs.sample }}' ];    then args+=( --sample '${{ inputs.sample }}' ); fi
+        if [ '${{ inputs.ignore-case }}' = 'true' ];      then args+=( --ignore-case ); fi
+        if [ '${{ inputs.allow-duplicates }}' = 'true' ]; then args+=( --allow-duplicates ); fi
+
+        report="${RUNNER_TEMP:-/tmp}/lake-sift-report.md"
+        set +e
+        lake-sift "${args[@]}" > "$report"
+        code=$?
+        set -e
+
+        cat "$report"
+        cat "$report" >> "$GITHUB_STEP_SUMMARY"
+
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+        if [ "$code" -eq 0 ]; then echo "diff=false" >> "$GITHUB_OUTPUT"; else echo "diff=true" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Comment on pull request
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        marker='<!-- lake-sift-report -->'
+        body="$(printf '%s\n\n%s' "$marker" "$(cat '${{ steps.run.outputs.report }}')")"
+        pr='${{ github.event.pull_request.number }}'
+        # Update the existing sticky comment if present, otherwise create one.
+        existing="$(gh api "repos/${{ github.repository }}/issues/${pr}/comments" \
+          --jq "map(select(.body | startswith(\"$marker\"))) | .[0].id // empty")"
+        if [ -n "$existing" ]; then
+          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${existing}" -f body="$body" >/dev/null
+        else
+          gh api -X POST "repos/${{ github.repository }}/issues/${pr}/comments" -f body="$body" >/dev/null
+        fi
+
+    - name: Enforce diff gate
+      shell: bash
+      run: |
+        code='${{ steps.run.outputs.exit_code }}'
+        # A comparison error (exit 2) always fails; differences (exit 1) fail only when gated.
+        if [ "$code" -eq 2 ]; then
+          echo "::error::lake-sift could not complete the comparison (exit 2)."
+          exit 2
+        fi
+        if [ "$code" -ne 0 ] && [ '${{ inputs.fail-on-diff }}' = 'true' ]; then
+          echo "::error::lake-sift found differences (exit $code) and fail-on-diff is enabled."
+          exit "$code"
+        fi

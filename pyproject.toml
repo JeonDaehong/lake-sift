@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lake-sift"
-version = "0.4.0"
+version = "0.5.0"
 description = "Value-level data diff for the lakehouse — compare Parquet, Iceberg, and Delta down to the cell, no Spark or warehouse"
 readme = "README.md"
 license = { text = "MIT" }

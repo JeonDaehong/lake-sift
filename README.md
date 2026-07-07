@@ -49,7 +49,7 @@ format-native · review-oriented output.
 - **Single & composite keys**, with duplicate-key detection.
 - **`NULL == NULL` treated as equal** (unlike default SQL semantics).
 - **Column scoping** — `--columns` (only these) / `--exclude` (skip these, e.g. `updated_at`).
-- **Three output modes** — human-readable color, machine-readable JSON, summary-only.
+- **Output modes** — human-readable color, machine-readable JSON, a Markdown report (for PR comments / CI step summaries), or summary-only.
 - **CI-friendly exit codes** — `0` equal, `1` differences, `2` error.
 - **Single-node engine** — heavy comparison runs as DuckDB SQL; Python is a thin orchestrator.
 
@@ -87,9 +87,9 @@ lake-sift a.parquet b.parquet -k order_id,line_no -x updated_at --json
 lake-sift prod.parquet pr.parquet -k id || echo "data change detected!"
 ```
 
-Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--summary`,
-`--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`, `--sample/-n`, `--top`,
-`--version`.
+Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--markdown`,
+`--summary`, `--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`,
+`--sample/-n`, `--top`, `--version`.
 
 **Column projection (pushdown).** When you narrow the comparison with `--columns`
 or `--exclude`, lake-sift reads only the key plus the compared columns from each
@@ -150,6 +150,37 @@ lake-sift export.parquet "delta:s3://lake/sales" -k order_id
 Requires the `delta` extra (`pip install "lake-sift[delta]"`). For finer control
 (column projection, predicate filters, storage credentials, an already-loaded
 table) use `DeltaSource` from the Python API.
+
+### GitHub Action
+
+Run the diff as a CI step: it writes the Markdown report to the job summary,
+optionally posts it as a sticky pull-request comment, and (by default) fails the
+check when the datasets differ — turning any of the diffs above into a merge gate.
+
+```yaml
+- uses: actions/setup-python@v5
+  with:
+    python-version: "3.12"
+
+- uses: JeonDaehong/lake-sift@v0.5.0
+  with:
+    left: "iceberg:prod/sales.orders@main"
+    right: "iceberg:prod/sales.orders@staging"   # audit the WAP staging branch
+    key: order_id
+    extras: iceberg          # install the source format(s) you use
+    fail-on-diff: "true"     # block the PR when the branches differ
+    comment: "true"          # post the report as a sticky PR comment
+  env:
+    PYICEBERG_CATALOG__PROD__URI: ${{ secrets.ICEBERG_CATALOG_URI }}
+```
+
+Key inputs: `left`, `right`, `key` (required); `columns`, `exclude`, `tolerance`,
+`ignore-case`, `allow-duplicates`, `sample` (passed through to the CLI); `extras`
+(`iceberg` / `delta` / `iceberg,delta`), `version`, `fail-on-diff`, `comment`.
+Outputs: `diff` (`true`/`false`), `exit-code`, `report` (path to the Markdown file).
+Lakehouse credentials are supplied by your workflow's `env`/`secrets` — the action
+only invokes lake-sift. Full examples live in
+[`examples/github-actions/`](examples/github-actions).
 
 ### Python API
 

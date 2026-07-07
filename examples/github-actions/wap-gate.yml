@@ -1,0 +1,35 @@
+# Write-Audit-Publish gate: audit an Iceberg staging branch against `main`
+# and block the merge if the diff isn't what you expect.
+#
+# Copy this into .github/workflows/ in your own repository.
+name: Audit data change
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write   # only needed for `comment: true`
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Diff staging against main
+        uses: JeonDaehong/lake-sift@v0.5.0
+        with:
+          left: "iceberg:prod/sales.orders@main"
+          right: "iceberg:prod/sales.orders@staging"
+          key: order_id
+          extras: iceberg
+          fail-on-diff: "true"   # block the PR when the branches differ
+          comment: "true"        # post the diff report as a sticky PR comment
+        env:
+          # PyIceberg reads catalog connection details from these (or ~/.pyiceberg.yaml).
+          PYICEBERG_CATALOG__PROD__URI: ${{ secrets.ICEBERG_CATALOG_URI }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

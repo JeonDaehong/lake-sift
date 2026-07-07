@@ -1,0 +1,32 @@
+# Simple PR check: diff two Parquet artifacts and report the result, without
+# blocking the merge. Useful when you want visibility, not a hard gate.
+#
+# Copy this into .github/workflows/ in your own repository.
+name: Data diff report
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Diff baseline vs candidate
+        uses: JeonDaehong/lake-sift@v0.5.0
+        with:
+          left: data/baseline.parquet
+          right: data/candidate.parquet
+          key: id
+          exclude: updated_at    # ignore volatile columns
+          tolerance: "0.01"      # treat tiny float drift as equal
+          fail-on-diff: "false"  # report only, don't block
+          comment: "true"
