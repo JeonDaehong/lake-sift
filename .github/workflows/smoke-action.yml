@@ -1,0 +1,78 @@
+# Smoke test for the composite action in action.yml. Generates throwaway Parquet
+# data, then exercises the action across report / identical / gate scenarios and
+# asserts its outputs. Runs on demand and when the action itself changes.
+name: Smoke test (action)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "action.yml"
+      - ".github/workflows/smoke-action.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate test Parquet data
+        shell: bash
+        run: |
+          python -m pip install --quiet pyarrow
+          python - <<'PY'
+          import pyarrow as pa, pyarrow.parquet as pq
+          before = pa.table({"id": [1, 2, 3], "qty": [10, 20, 30],
+                             "status": ["paid", "paid", "pending"]})
+          after  = pa.table({"id": [2, 3, 4], "qty": [20, 99, 40],
+                             "status": ["paid", "paid", "new"]})
+          pq.write_table(before, "before.parquet")
+          pq.write_table(after, "after.parquet")
+          print("wrote before.parquet / after.parquet")
+          PY
+
+      - name: Diff — differences expected (report only)
+        id: report
+        uses: ./
+        with:
+          left: before.parquet
+          right: after.parquet
+          key: id
+          fail-on-diff: "false"
+
+      - name: Diff — identical inputs (no differences expected)
+        id: same
+        uses: ./
+        with:
+          left: before.parquet
+          right: before.parquet
+          key: id
+          fail-on-diff: "false"
+
+      - name: Diff — gate demo (fail-on-diff, step expected to fail)
+        id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          left: before.parquet
+          right: after.parquet
+          key: id
+          fail-on-diff: "true"
+
+      - name: Assert outputs
+        shell: bash
+        run: |
+          echo "report.diff      = ${{ steps.report.outputs.diff }}"
+          echo "report.exit-code = ${{ steps.report.outputs['exit-code'] }}"
+          echo "same.diff        = ${{ steps.same.outputs.diff }}"
+          echo "gate.outcome     = ${{ steps.gate.outcome }}"
+          fail=0
+          [ "${{ steps.report.outputs.diff }}" = "true" ]  || { echo "::error::report.diff should be true"; fail=1; }
+          [ "${{ steps.same.outputs.diff }}" = "false" ]   || { echo "::error::same.diff should be false"; fail=1; }
+          [ "${{ steps.gate.outcome }}" = "failure" ]      || { echo "::error::gate step should have failed"; fail=1; }
+          if [ "$fail" -eq 0 ]; then echo "All assertions passed ✅"; fi
+          exit "$fail"
