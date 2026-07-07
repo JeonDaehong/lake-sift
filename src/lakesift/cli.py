@@ -15,6 +15,7 @@ from rich.console import Console
 from lakesift import __version__
 from lakesift.core import DiffError, diff
 from lakesift.render.human import render_human
+from lakesift.render.markdown import render_markdown
 from lakesift.sources.base import Source
 from lakesift.sources.delta import DeltaSource
 from lakesift.sources.iceberg import IcebergSource
@@ -113,6 +114,9 @@ def main(
     exclude: Optional[str] = typer.Option(None, "--exclude", "-x", help="Columns to exclude from comparison"),
     columns: Optional[str] = typer.Option(None, "--columns", "-c", help="Compare only these columns"),
     json_out: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
+    markdown: bool = typer.Option(
+        False, "--markdown", help="Markdown report (for PR comments / CI step summaries)"
+    ),
     summary: bool = typer.Option(False, "--summary", help="Print the summary only"),
     allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicate keys"),
     tolerance: Optional[float] = typer.Option(
@@ -166,6 +170,11 @@ def main(
             # Stream rows/cells one at a time (bypassing rich buffering/coloring).
             result.write_json(sys.stdout)
             sys.stdout.write("\n")
+        elif markdown:
+            kw = {} if sample is None else {"max_rows": sample}
+            sys.stdout.write(
+                render_markdown(result, summary_only=summary, top_columns=top, **kw)
+            )
         else:
             kw = {} if sample is None else {"max_rows": sample}
             render_human(
