@@ -49,6 +49,7 @@ format-native · review-oriented output.
 - **Single & composite keys**, with duplicate-key detection.
 - **`NULL == NULL` treated as equal** (unlike default SQL semantics).
 - **Column scoping** — `--columns` (only these) / `--exclude` (skip these, e.g. `updated_at`).
+- **Schema-only mode** — `--schema-only` compares just the schemas (no key, no data read) as a pre-execution / contract gate.
 - **Output modes** — human-readable color, machine-readable JSON, a Markdown report (for PR comments / CI step summaries), or summary-only.
 - **CI-friendly exit codes** — `0` equal, `1` differences, `2` error.
 - **Single-node engine** — heavy comparison runs as DuckDB SQL; Python is a thin orchestrator.
@@ -88,8 +89,27 @@ lake-sift prod.parquet pr.parquet -k id || echo "data change detected!"
 ```
 
 Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--markdown`,
-`--summary`, `--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`,
-`--sample/-n`, `--top`, `--version`.
+`--summary`, `--schema-only`, `--allow-duplicates`, `--tolerance/-t`,
+`--ignore-case/-i`, `--sample/-n`, `--top`, `--version`.
+
+### Schema-only checks (pre-execution gate)
+
+`--schema-only` compares just the two **schemas** — no `--key`, and **no data is
+read** (Iceberg/Delta report their schema from metadata; Parquet reads only the
+footer). It reports added / removed / retyped columns and nothing else, so it is a
+fast structural gate you can run *before* materializing rows — e.g. to catch a
+dropped or retyped column that would break a downstream contract.
+
+```bash
+# Did the freshly built table drift from the live one's schema? (data is never read)
+lake-sift "iceberg:prod/sales.orders@main" "delta:/build/sales.orders" --schema-only
+# ~ column amount: INTEGER → DOUBLE
+# - column discount (DOUBLE)
+```
+
+Exit codes are the usual `0` / `1` / `2`, so it drops into CI the same way. From
+Python, use `schema_diff(left, right)` — it returns a `DiffResult` carrying only
+`schema_changes` and owns no live connection.
 
 **Column projection (pushdown).** When you narrow the comparison with `--columns`
 or `--exclude`, lake-sift reads only the key plus the compared columns from each

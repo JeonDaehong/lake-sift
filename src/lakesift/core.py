@@ -193,6 +193,28 @@ def _change_stats(
     return int(row[0]), sum(per_counts), changed_by_column
 
 
+def schema_diff(left: "Source", right: "Source") -> DiffResult:
+    """Compare only the *schemas* of two sources — no key, no data read.
+
+    Returns a `DiffResult` carrying just `schema_changes` (added / removed / type-changed
+    columns); its row/cell streams are empty. Each side's schema is obtained through the
+    cheap probe (`arrow_schema()` when the source provides it, otherwise the relation's
+    footer), so Iceberg/Delta touch metadata only and nothing is materialized.
+
+    This is the pre-execution / contract gate: point it at a produced-vs-expected schema
+    (e.g. a freshly built table vs the live one, or a predicted schema) to catch a dropped
+    or retyped column *before* running the pipeline or reading a single row. The result
+    owns no live connection, so it does not need to be closed (though `with` is harmless).
+    """
+    con = duckdb.connect()  # only used to normalize types; closed right away.
+    try:
+        lschema = _probe_schema(con, left)
+        rschema = _probe_schema(con, right)
+    finally:
+        con.close()
+    return DiffResult(key=[], schema_changes=_schema_changes(lschema, rschema))
+
+
 def diff(
     left: "Source",
     right: "Source",

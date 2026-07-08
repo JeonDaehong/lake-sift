@@ -13,7 +13,7 @@ import typer
 from rich.console import Console
 
 from lakesift import __version__
-from lakesift.core import DiffError, diff
+from lakesift.core import DiffError, diff, schema_diff
 from lakesift.render.human import render_human
 from lakesift.render.markdown import render_markdown
 from lakesift.sources.base import Source
@@ -118,6 +118,12 @@ def main(
         False, "--markdown", help="Markdown report (for PR comments / CI step summaries)"
     ),
     summary: bool = typer.Option(False, "--summary", help="Print the summary only"),
+    schema_only: bool = typer.Option(
+        False,
+        "--schema-only",
+        help="Compare only schemas, reading no data (no --key needed). A pre-execution / "
+        "contract gate: catch added/removed/retyped columns without materializing rows.",
+    ),
     allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicate keys"),
     tolerance: Optional[float] = typer.Option(
         None, "--tolerance", "-t", help="Numeric tolerance (equal when abs(l-r) <= tol)"
@@ -150,21 +156,25 @@ def main(
     err = Console(stderr=True)
 
     keys = _split(key)
-    if not keys:
-        err.print("[red]error:[/red] --key is required.")
+    if not schema_only and not keys:
+        err.print("[red]error:[/red] --key is required (unless --schema-only).")
         raise typer.Exit(code=2)
 
     try:
-        result = diff(
-            left=_source(left),
-            right=_source(right),
-            key=keys,
-            exclude=_split(exclude),
-            columns=_split(columns),
-            allow_duplicates=allow_duplicates,
-            tolerance=tolerance,
-            ignore_case=ignore_case,
-        )
+        if schema_only:
+            # Schema-only: no key, no data read, other comparison options don't apply.
+            result = schema_diff(_source(left), _source(right))
+        else:
+            result = diff(
+                left=_source(left),
+                right=_source(right),
+                key=keys,
+                exclude=_split(exclude),
+                columns=_split(columns),
+                allow_duplicates=allow_duplicates,
+                tolerance=tolerance,
+                ignore_case=ignore_case,
+            )
     except Exception as e:
         # DiffError is the expected case; any other exception (read failures, etc.) is
         # also treated as comparison-not-possible and mapped to exit code 2.
