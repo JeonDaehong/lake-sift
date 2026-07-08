@@ -139,6 +139,13 @@ def main(
         help="Show the version and exit.",
     ),
 ) -> None:
+    """Diff two datasets at the cell level (Parquet, Iceberg, Delta).
+
+    For a reproducible diff, pin an immutable point in time on each side: a Parquet
+    file, an Iceberg snapshot id (@1042), or a Delta version (@12). A moving Iceberg
+    branch/tag (@main) advances with concurrent writes, so reserve it for the
+    isolated staging branch in Write-Audit-Publish.
+    """
     console = Console()
     err = Console(stderr=True)
 

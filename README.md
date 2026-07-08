@@ -110,6 +110,16 @@ connection details are read from PyIceberg's standard config
 ([`~/.pyiceberg.yaml`](https://py.iceberg.apache.org/configuration/) or
 `PYICEBERG_*` environment variables) — lake-sift only references a catalog by name.
 
+> **Reproducible diffs — pin an immutable ref.** A diff is only meaningful when
+> both sides are fixed points in time. A **snapshot id** (`@1042`) is immutable, so
+> the same command always yields the same result. A **branch/tag** (`@main`) is a
+> *moving* pointer — concurrent writes advance it, so a table diffed against a live
+> branch shows rows written in between as spurious added/removed. Diff **files**
+> (immutable by nature), **snapshot ids**, or **Delta versions** for a stable gate;
+> reserve moving refs for the WAP pattern below, where the staging branch is
+> *isolated* from `main` and both sides only move under your control. For a CI gate,
+> capture the snapshot id at read time and pin it, rather than re-reading `@main`.
+
 ```bash
 # Diff two snapshots of the same Iceberg table (audit a change)
 lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k order_id
