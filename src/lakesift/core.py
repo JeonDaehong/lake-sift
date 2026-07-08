@@ -63,13 +63,19 @@ def _anti_join(select: str, outer: str, inner: str, on: str) -> str:
     return f"SELECT {select} FROM {outer} ANTI JOIN {inner} ON {on}"
 
 
-def _schema_changes(lschema: dict[str, str], rschema: dict[str, str]) -> list[SchemaChange]:
-    """Column-level schema delta: removed/type-changed (left order), then added (right only)."""
+def _schema_changes(
+    lschema: dict[str, str], rschema: dict[str, str], *, compare_types: bool = True
+) -> list[SchemaChange]:
+    """Column-level schema delta: removed/type-changed (left order), then added (right only).
+
+    With `compare_types=False`, only column presence is compared (no `type_changed`) — a
+    purely structural check, useful when the right-hand types are best-effort predictions.
+    """
     changes: list[SchemaChange] = []
     for col, t in lschema.items():
         if col not in rschema:
             changes.append(SchemaChange(col, "removed", old_type=t))
-        elif rschema[col] != t:
+        elif compare_types and rschema[col] != t:
             changes.append(SchemaChange(col, "type_changed", old_type=t, new_type=rschema[col]))
     for col, t in rschema.items():
         if col not in lschema:
@@ -193,7 +199,7 @@ def _change_stats(
     return int(row[0]), sum(per_counts), changed_by_column
 
 
-def schema_diff(left: "Source", right: "Source") -> DiffResult:
+def schema_diff(left: "Source", right: "Source", *, compare_types: bool = True) -> DiffResult:
     """Compare only the *schemas* of two sources — no key, no data read.
 
     Returns a `DiffResult` carrying just `schema_changes` (added / removed / type-changed
@@ -205,6 +211,10 @@ def schema_diff(left: "Source", right: "Source") -> DiffResult:
     (e.g. a freshly built table vs the live one, or a predicted schema) to catch a dropped
     or retyped column *before* running the pipeline or reading a single row. The result
     owns no live connection, so it does not need to be closed (though `with` is harmless).
+
+    With `compare_types=False`, only column presence is compared (added/removed, no
+    type_changed) — a purely structural gate, appropriate when one side's types are
+    best-effort predictions (e.g. a `SqlSchemaSource`).
     """
     con = duckdb.connect()  # only used to normalize types; closed right away.
     try:
@@ -212,7 +222,9 @@ def schema_diff(left: "Source", right: "Source") -> DiffResult:
         rschema = _probe_schema(con, right)
     finally:
         con.close()
-    return DiffResult(key=[], schema_changes=_schema_changes(lschema, rschema))
+    return DiffResult(
+        key=[], schema_changes=_schema_changes(lschema, rschema, compare_types=compare_types)
+    )
 
 
 def diff(

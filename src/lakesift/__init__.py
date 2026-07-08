@@ -5,6 +5,7 @@ from lakesift.result import CellChange, DiffResult, SchemaChange
 from lakesift.sources.delta import DeltaSource
 from lakesift.sources.iceberg import IcebergSource
 from lakesift.sources.parquet import ParquetSource
+from lakesift.sources.sql import SqlSchemaSource
 
 __all__ = [
     "diff",
@@ -15,5 +16,6 @@ __all__ = [
     "ParquetSource",
     "IcebergSource",
     "DeltaSource",
+    "SqlSchemaSource",
 ]
 __version__ = "0.5.0"

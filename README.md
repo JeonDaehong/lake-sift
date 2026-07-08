@@ -50,6 +50,7 @@ format-native · review-oriented output.
 - **`NULL == NULL` treated as equal** (unlike default SQL semantics).
 - **Column scoping** — `--columns` (only these) / `--exclude` (skip these, e.g. `updated_at`).
 - **Schema-only mode** — `--schema-only` compares just the schemas (no key, no data read) as a pre-execution / contract gate.
+- **Predicted-schema diff** — `SqlSchemaSource` infers a SQL query's output schema (via SQLGlot) to gate a change *before it runs*.
 - **Output modes** — human-readable color, machine-readable JSON, a Markdown report (for PR comments / CI step summaries), or summary-only.
 - **CI-friendly exit codes** — `0` equal, `1` differences, `2` error.
 - **Single-node engine** — heavy comparison runs as DuckDB SQL; Python is a thin orchestrator.
@@ -60,6 +61,7 @@ format-native · review-oriented output.
 pip install lake-sift             # Parquet diffing (no extra deps)
 pip install "lake-sift[iceberg]"  # with the Iceberg source (PyIceberg)
 pip install "lake-sift[delta]"    # with the Delta source (delta-rs)
+pip install "lake-sift[sql]"      # with SQL output-schema prediction (SQLGlot)
 ```
 
 Or install from source (for development):
@@ -70,8 +72,8 @@ cd lake-sift
 pip install -e ".[dev]"
 ```
 
-Requires Python 3.10+. The Iceberg and Delta sources are optional extras —
-Parquet diffing needs no extra dependencies.
+Requires Python 3.10+. The Iceberg, Delta, and SQL-prediction sources are optional
+extras — Parquet diffing needs no extra dependencies.
 
 ## Usage
 
@@ -110,6 +112,34 @@ lake-sift "iceberg:prod/sales.orders@main" "delta:/build/sales.orders" --schema-
 Exit codes are the usual `0` / `1` / `2`, so it drops into CI the same way. From
 Python, use `schema_diff(left, right)` — it returns a `DiffResult` carrying only
 `schema_changes` and owns no live connection.
+
+#### Predicting a query's output schema before it runs
+
+The schema check can move even further left — *before the pipeline runs at all*.
+`SqlSchemaSource` uses [SQLGlot](https://github.com/tobymao/sqlglot) to infer the
+**output schema of a SQL query** from the schemas of its upstream tables, without
+executing it or reading a row. Pair the prediction with the live table's schema to
+catch a breaking change in code review, the way a reasoner checks an ontology before
+it is used:
+
+```python
+from lakesift import schema_diff, SqlSchemaSource, IcebergSource
+
+pred = SqlSchemaSource(
+    "SELECT id, CAST(amount AS DOUBLE) AS amount FROM orders WHERE status = 'paid'",
+    upstreams={"orders": IcebergSource.from_catalog("prod", "sales.orders")},
+)
+# current live schema (left) vs the schema this query *would* produce (right)
+with schema_diff(IcebergSource.from_catalog("prod", "sales.orders"), pred) as r:
+    for c in r.schema_changes:
+        print(c.kind, c.column)          # e.g. removed discount / type_changed amount
+```
+
+Upstream schemas are read from ordinary sources (metadata only), so the whole
+prediction touches no data and needs no warehouse. **Structural** prediction (which
+columns are added / dropped / renamed) is reliable; **types** are best-effort — for a
+purely structural gate, use `schema_diff(..., compare_types=False)`. Requires the
+`sql` extra (`pip install "lake-sift[sql]"`).
 
 **Column projection (pushdown).** When you narrow the comparison with `--columns`
 or `--exclude`, lake-sift reads only the key plus the compared columns from each
@@ -295,7 +325,7 @@ lake-sift/
 ├── src/lakesift/
 │   ├── core.py          # diff engine (DuckDB SQL generation/execution)
 │   ├── result.py        # DiffResult, CellChange, SchemaChange
-│   ├── sources/         # input adapters (parquet, iceberg, delta)
+│   ├── sources/         # input adapters (parquet, iceberg, delta, sql schema prediction)
 │   ├── render/          # human (color) and json renderers
 │   └── cli.py           # typer CLI
 └── tests/
