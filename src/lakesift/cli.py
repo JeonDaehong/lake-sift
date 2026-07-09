@@ -7,6 +7,7 @@ not possible).
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -20,11 +21,13 @@ from lakesift.sources.base import Source
 from lakesift.sources.delta import DeltaSource
 from lakesift.sources.iceberg import IcebergSource
 from lakesift.sources.parquet import ParquetSource
+from lakesift.sources.sql import SqlSchemaSource
 
 app = typer.Typer(add_completion=False, help="Diff two datasets at the cell level (Parquet · Iceberg · Delta).")
 
 _ICEBERG_PREFIX = "iceberg:"
 _DELTA_PREFIX = "delta:"
+_SQL_PREFIX = "sql:"
 
 
 def _split(value: Optional[str]) -> Optional[list[str]]:
@@ -33,20 +36,52 @@ def _split(value: Optional[str]) -> Optional[list[str]]:
     return [c.strip() for c in value.split(",") if c.strip()]
 
 
-def _source(spec: str) -> Source:
+def _source(spec: str, *, upstreams: Optional[dict[str, str]] = None, dialect: str = "duckdb") -> Source:
     """Resolve an operand string into a Source.
 
     - `iceberg:<catalog>/<namespace>.<table>[@<snapshot_id>]` -> IcebergSource
       (catalog connection details are read from PyIceberg's standard config,
       `~/.pyiceberg.yaml`/env)
     - `delta:<path-or-uri>[@<version>]` -> DeltaSource (local path or a URI such as s3://)
+    - `sql:<path-to-.sql-file>` -> SqlSchemaSource (predicted output schema; needs
+      `--upstream NAME=SOURCE` for each table the query reads; --schema-only only)
     - anything else -> ParquetSource (file path or glob)
     """
     if spec.startswith(_ICEBERG_PREFIX):
         return _iceberg_source(spec[len(_ICEBERG_PREFIX):])
     if spec.startswith(_DELTA_PREFIX):
         return _delta_source(spec[len(_DELTA_PREFIX):])
+    if spec.startswith(_SQL_PREFIX):
+        return _sql_source(spec[len(_SQL_PREFIX):], upstreams or {}, dialect)
     return ParquetSource(spec)
+
+
+def _parse_upstreams(items: Optional[list[str]]) -> dict[str, str]:
+    """`--upstream NAME=SOURCE` entries -> {name: source-spec}. SOURCE is itself an
+    operand spec (Parquet path, iceberg:…, delta:…)."""
+    out: dict[str, str] = {}
+    for item in items or []:
+        name, sep, spec = item.partition("=")
+        name, spec = name.strip(), spec.strip()
+        if not sep or not name or not spec:
+            raise DiffError(f"--upstream must be NAME=SOURCE: {item!r}")
+        out[name] = spec
+    return out
+
+
+def _sql_source(rest: str, upstreams: dict[str, str], dialect: str) -> SqlSchemaSource:
+    if not rest:
+        raise DiffError("SQL source format: sql:<path-to-.sql-file>")
+    if not upstreams:
+        raise DiffError(
+            "sql: source needs at least one --upstream NAME=SOURCE (the query's input tables)."
+        )
+    try:
+        sql_text = Path(rest).read_text(encoding="utf-8")
+    except OSError as e:
+        raise DiffError(f"cannot read SQL file {rest!r}: {e}")
+    resolved = {name: _source(spec) for name, spec in upstreams.items()}
+    return SqlSchemaSource(sql_text, resolved, dialect=dialect)
 
 
 def _split_ref(rest: str, what: str) -> tuple[str, str | None]:
@@ -124,6 +159,22 @@ def main(
         help="Compare only schemas, reading no data (no --key needed). A pre-execution / "
         "contract gate: catch added/removed/retyped columns without materializing rows.",
     ),
+    structural_only: bool = typer.Option(
+        False,
+        "--structural-only",
+        help="With --schema-only, compare column presence only (ignore type changes) — "
+        "appropriate when one side's types are best-effort predictions (a sql: source).",
+    ),
+    upstream: Optional[list[str]] = typer.Option(
+        None,
+        "--upstream",
+        "-u",
+        help="NAME=SOURCE input table for a sql: operand (repeatable); SOURCE is a "
+        "Parquet path / iceberg: / delta: spec.",
+    ),
+    sql_dialect: str = typer.Option(
+        "duckdb", "--sql-dialect", help="SQL dialect for a sql: operand (SQLGlot dialect name)."
+    ),
     allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicate keys"),
     tolerance: Optional[float] = typer.Option(
         None, "--tolerance", "-t", help="Numeric tolerance (equal when abs(l-r) <= tol)"
@@ -161,9 +212,14 @@ def main(
         raise typer.Exit(code=2)
 
     try:
+        upstreams = _parse_upstreams(upstream)
         if schema_only:
             # Schema-only: no key, no data read, other comparison options don't apply.
-            result = schema_diff(_source(left), _source(right))
+            result = schema_diff(
+                _source(left, upstreams=upstreams, dialect=sql_dialect),
+                _source(right, upstreams=upstreams, dialect=sql_dialect),
+                compare_types=not structural_only,
+            )
         else:
             result = diff(
                 left=_source(left),

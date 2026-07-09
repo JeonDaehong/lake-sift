@@ -205,3 +205,51 @@ def test_source_delta_empty_version_raises():
     # a trailing '@' with no version is a usage error, not int('') blowing up
     with pytest.raises(DiffError, match="after '@' is empty"):
         _source("delta:/data/my_table@")
+
+
+# --- sql: schema-prediction source (--upstream) ------------------------------
+
+
+def test_parse_upstreams_and_bad_forms():
+    from lakesift.cli import _parse_upstreams
+
+    assert _parse_upstreams(["orders=o.parquet", "c = iceberg:p/n.t"]) == {
+        "orders": "o.parquet",
+        "c": "iceberg:p/n.t",
+    }
+    assert _parse_upstreams(None) == {}
+    for bad in ["noequals", "=nope", "name="]:
+        with pytest.raises(DiffError, match="NAME=SOURCE"):
+            _parse_upstreams([bad])
+
+
+def test_sql_source_needs_upstream_and_path():
+    with pytest.raises(DiffError, match="upstream"):
+        _source("sql:model.sql")  # no upstreams supplied
+    with pytest.raises(DiffError, match="sql:"):
+        _source("sql:", upstreams={"orders": "o.parquet"})  # empty path
+
+
+def test_sql_source_missing_file_raises(tmp_path):
+    with pytest.raises(DiffError, match="cannot read"):
+        _source(f"sql:{tmp_path / 'nope.sql'}", upstreams={"orders": "o.parquet"})
+
+
+def test_cli_sql_schema_prediction_end_to_end(tmp_path):
+    # the model drops `discount` -> current vs predicted schema differs (exit 1)
+    orders = _write(tmp_path / "orders.parquet", {"id": [1], "amount": [1], "discount": [0.1]})
+    model = tmp_path / "model.sql"
+    model.write_text("SELECT id, amount FROM orders", encoding="utf-8")
+    r = runner.invoke(app, [orders, f"sql:{model}", "--schema-only", "-u", f"orders={orders}"])
+    assert r.exit_code == 1
+    assert "discount" in r.stdout
+
+
+def test_cli_structural_only_ignores_type_change(tmp_path):
+    orders = _write(tmp_path / "orders.parquet", {"id": [1], "amount": pa.array([1], pa.int32())})
+    model = tmp_path / "m.sql"
+    model.write_text("SELECT id, CAST(amount AS DOUBLE) AS amount FROM orders", encoding="utf-8")
+    base = [orders, f"sql:{model}", "--schema-only", "-u", f"orders={orders}"]
+    assert runner.invoke(app, base).exit_code == 1  # type change detected
+    # structurally the columns are identical -> --structural-only clears it (exit 0)
+    assert runner.invoke(app, base + ["--structural-only"]).exit_code == 0

@@ -91,8 +91,9 @@ lake-sift prod.parquet pr.parquet -k id || echo "data change detected!"
 ```
 
 Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--markdown`,
-`--summary`, `--schema-only`, `--allow-duplicates`, `--tolerance/-t`,
-`--ignore-case/-i`, `--sample/-n`, `--top`, `--version`.
+`--summary`, `--schema-only`, `--structural-only`, `--upstream/-u`,
+`--sql-dialect`, `--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`,
+`--sample/-n`, `--top`, `--version`.
 
 ### Schema-only checks (pre-execution gate)
 
@@ -135,11 +136,29 @@ with schema_diff(IcebergSource.from_catalog("prod", "sales.orders"), pred) as r:
         print(c.kind, c.column)          # e.g. removed discount / type_changed amount
 ```
 
+The same check is available from the CLI: pass the query as a `sql:<file.sql>`
+operand and name each input table with `--upstream/-u NAME=SOURCE` (the source is an
+ordinary operand — a Parquet path, `iceberg:…`, or `delta:…`). It only applies under
+`--schema-only`:
+
+```bash
+# current live schema vs the schema model.sql *would* produce — no data read
+lake-sift "iceberg:prod/sales.orders" "sql:model.sql" --schema-only \
+  -u orders="iceberg:prod/sales.orders" -u customers=customers.parquet
+# ~ column amount: INTEGER → DOUBLE
+# - column discount (DOUBLE)
+
+# structure only (ignore best-effort type predictions); --sql-dialect for non-DuckDB SQL
+lake-sift "iceberg:prod/sales.orders" "sql:model.sql" --schema-only --structural-only \
+  --sql-dialect snowflake -u orders="iceberg:prod/sales.orders"
+```
+
 Upstream schemas are read from ordinary sources (metadata only), so the whole
 prediction touches no data and needs no warehouse. **Structural** prediction (which
 columns are added / dropped / renamed) is reliable; **types** are best-effort — for a
-purely structural gate, use `schema_diff(..., compare_types=False)`. Requires the
-`sql` extra (`pip install "lake-sift[sql]"`).
+purely structural gate, use `--structural-only` (CLI) or `schema_diff(...,
+compare_types=False)` (Python). Requires the `sql` extra (`pip install
+"lake-sift[sql]"`).
 
 **Column projection (pushdown).** When you narrow the comparison with `--columns`
 or `--exclude`, lake-sift reads only the key plus the compared columns from each
