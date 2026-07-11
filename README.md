@@ -230,6 +230,36 @@ Requires the `delta` extra (`pip install "lake-sift[delta]"`). For finer control
 (column projection, predicate filters, storage credentials, an already-loaded
 table) use `DeltaSource` from the Python API.
 
+### Deployment gate — attributing a value diff to a code change
+
+A value diff of *yesterday's production table* vs *today's freshly built table* is
+**confounded by time**: it mixes the pipeline change you want to review with source
+rows that arrived in between, and you cannot separate them — so it is meaningless as
+a gate for a *code* change. The fix is to remove the time variable: pin **one
+immutable input snapshot**, run the **old** code and the **new** code against that
+same input, and diff the two outputs. Both runs read identical bytes, so every
+difference is caused by the code change.
+
+```
+pinned input  ─┬─▶  OLD sql  ─▶  output_old ─┐
+(immutable)    │                             ├─▶  lake-sift diff  ─▶  gate (exit 0/1)
+               └─▶  NEW sql  ─▶  output_new ─┘
+```
+
+lake-sift is the comparator on the right; the thin "pin, run old, run new"
+orchestration on the left is a copy-pasteable recipe in
+[`examples/deployment-gate/`](examples/deployment-gate) (single-node DuckDB, no
+warehouse — the framework-free analogue of Datafold / SQLMesh `table_diff`). Try it
+with zero setup:
+
+```bash
+python examples/deployment-gate/run_gate.py --demo
+```
+
+This complements the two static gates above: `--schema-only` (+ `sql:` prediction)
+catches a *schema* break before the pipeline runs; the deployment gate catches how
+the *values* move once it does.
+
 ### GitHub Action
 
 Run the diff as a CI step: it writes the Markdown report to the job summary,

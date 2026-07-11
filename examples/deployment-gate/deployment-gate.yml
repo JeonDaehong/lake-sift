@@ -1,0 +1,56 @@
+# Deployment gate: diff a SQL pipeline's OUTPUT before vs after the change in a PR,
+# with the INPUT pinned so the diff is attributable to the code change alone.
+#
+# Unlike wap-gate.yml (which audits a live staging branch), this gate is meaningful
+# for a *code* change: it runs the old and the new model against the SAME immutable
+# input snapshot, so no source-data drift can leak into the diff.
+#
+# Copy this into .github/workflows/ in your own repository.
+name: Deployment gate
+
+on:
+  pull_request:
+    paths:
+      - "models/**.sql"   # run only when a model changes
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # need the base ref to read the OLD model
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lake-sift
+        run: pip install lake-sift
+
+      - name: Pin the input snapshot
+        # Pin ONE immutable input both model versions will read. Here it is exported
+        # once to a Parquet file; in a lakehouse, pin an Iceberg snapshot id / Delta
+        # version instead and export (or register) it the same way. The point is that
+        # both runs below read byte-identical input.
+        run: |
+          mkdir -p _pinned
+          # e.g. duckdb -c "COPY (SELECT * FROM read_parquet('s3://.../orders/*.parquet')) TO '_pinned/orders.parquet'"
+          cp data/orders.parquet _pinned/orders.parquet
+
+      - name: Fetch the OLD model from the base branch
+        run: |
+          git show "origin/${{ github.base_ref }}:models/orders.sql" > model_old.sql
+
+      - name: Gate — diff old vs new output on the pinned input
+        run: |
+          python examples/deployment-gate/run_gate.py \
+            --input orders=_pinned/orders.parquet \
+            --old model_old.sql \
+            --new models/orders.sql \
+            --key order_id
+        # exit 0 = identical, 1 = differences (fails the check), 2 = error
