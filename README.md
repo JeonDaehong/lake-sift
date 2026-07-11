@@ -55,6 +55,83 @@ format-native · review-oriented output.
 - **CI-friendly exit codes** — `0` equal, `1` differences, `2` error.
 - **Single-node engine** — heavy comparison runs as DuckDB SQL; Python is a thin orchestrator.
 
+## Common workflows
+
+The real situations teams reach for `lake-sift`. Each is a short recipe — the
+[Usage](#usage) section below has the full flag reference and the Python API.
+
+### 1. Review a data-pipeline change the way you review code
+
+You changed a SQL model in a PR. You want to see *how the output moves* — not
+whether the source data happened to drift overnight. Pin **one immutable input**,
+run the old and the new model against it, and diff the two outputs, so every
+difference is attributable to your change and nothing else:
+
+```bash
+python examples/deployment-gate/run_gate.py \
+  --input orders=./_pinned/orders.parquet \
+  --old model_old.sql --new model_new.sql --key order_id
+# +12 added  -0 removed  ~1043 changed rows (1043 cells)   ← caused by your model change alone
+```
+
+Try it with zero setup: `python examples/deployment-gate/run_gate.py --demo`.
+Full write-up in [`examples/deployment-gate/`](examples/deployment-gate).
+
+### 2. Block a breaking schema change *before* the pipeline runs
+
+A PR renames or drops a column a downstream table depends on. Catch it
+statically — no data read, no pipeline run — by diffing the schema the new query
+*would* produce against the live table:
+
+```bash
+lake-sift "iceberg:prod/sales.orders" "sql:model.sql" --schema-only \
+  -u orders="iceberg:prod/sales.orders"
+# - column discount (DOUBLE)     ← the downstream contract would break; exit 1 fails the check
+```
+
+### 3. Audit a change before you publish it (Write-Audit-Publish)
+
+Write to an isolated staging branch, diff it against `main`, and only merge if the
+diff is what you expect. The non-zero exit code makes it an orchestration gate:
+
+```bash
+lake-sift "iceberg:prod/sales.orders@main" "iceberg:prod/sales.orders@staging" -k order_id \
+  || echo "staging differs from main — review before publishing"
+```
+
+### 4. Validate a migration, backfill, or export
+
+Did the Parquet export match the live table? Did a backfill land exactly the rows
+you expected? Mix formats freely — the diff reads the same across all of them:
+
+```bash
+lake-sift export.parquet "iceberg:prod/sales.orders@1042" -k order_id   # export vs pinned snapshot
+lake-sift "delta:/data/sales@11" "delta:/data/sales@12" -k order_id     # audit two Delta versions
+```
+
+### 5. Turn any of the above into a CI gate with a PR comment
+
+Drop the diff into GitHub Actions: it writes the report to the job summary, posts
+it as a sticky PR comment, and fails the check when the data differs. Copy a
+workflow from [`examples/github-actions/`](examples/github-actions):
+
+```yaml
+- uses: JeonDaehong/lake-sift@v0.5.0
+  with:
+    left: "iceberg:prod/sales.orders@main"
+    right: "iceberg:prod/sales.orders@staging"
+    key: order_id
+    extras: iceberg
+    fail-on-diff: "true"   # block the PR when the data differs
+    comment: "true"        # post the diff as a sticky PR comment
+```
+
+> **Tip — pin immutable refs.** A diff is only meaningful when both sides are fixed
+> points in time. Prefer files, Iceberg **snapshot ids** (`@1042`), or Delta
+> **versions** (`@12`); a moving branch like `@main` advances with concurrent
+> writes and shows those in-between rows as spurious diffs. See
+> [Iceberg snapshots & branches](#iceberg-snapshots--branches) for details.
+
 ## Installation
 
 ```bash
