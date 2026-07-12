@@ -5,15 +5,8 @@ from __future__ import annotations
 from rich.console import Console
 from rich.markup import escape
 
+from lakesift.render._shared import DEFAULT_MAX_ROWS, fmt_pairs as _fmt_pairs
 from lakesift.result import DiffResult
-
-# v0: with no --sample, a default cap to keep the console from exploding.
-DEFAULT_MAX_ROWS = 20
-
-
-def _fmt_pairs(d: dict) -> str:
-    """Render a dict (a row, or a row's key) as `col=value` pairs."""
-    return ", ".join(f"{k}={v!r}" for k, v in d.items())
 
 
 def render_human(

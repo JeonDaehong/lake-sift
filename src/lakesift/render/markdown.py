@@ -4,15 +4,8 @@
 
 from __future__ import annotations
 
+from lakesift.render._shared import DEFAULT_MAX_ROWS, fmt_pairs as _fmt_pairs
 from lakesift.result import DiffResult
-
-# With no --sample, cap sample rows so a huge diff doesn't bloat a PR comment.
-DEFAULT_MAX_ROWS = 20
-
-
-def _fmt_pairs(d: dict) -> str:
-    """Render a dict (a row, or a row's key) as `col=value` pairs."""
-    return ", ".join(f"{k}={v!r}" for k, v in d.items())
 
 
 def _sample(items, total: int, render, max_rows: int) -> list[str]:
