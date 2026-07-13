@@ -4,19 +4,21 @@
 
 from __future__ import annotations
 
-from lakesift.render._shared import DEFAULT_MAX_ROWS, fmt_pairs as _fmt_pairs
+from lakesift.render._shared import (
+    DEFAULT_MAX_ROWS,
+    fmt_pairs as _fmt_pairs,
+    sampled,
+    top_split,
+)
 from lakesift.result import DiffResult
 
 
 def _sample(items, total: int, render, max_rows: int) -> list[str]:
     """Collect up to max_rows rendered lines, appending a '… +N more' marker."""
-    out: list[str] = []
-    for it in items:
-        if len(out) >= max_rows:
-            out.append(f"… +{total - max_rows} more")
-            break
-        out.append(render(it))
-    return out
+    return [
+        f"… +{val} more" if kind == "more" else render(val)
+        for kind, val in sampled(items, total, max_rows)
+    ]
 
 
 def render_markdown(
@@ -48,9 +50,8 @@ def render_markdown(
 
     # Top-K columns by changed cells.
     if top_columns > 0 and result.changed_by_column:
-        top = result.changed_by_column[:top_columns]
+        top, rest = top_split(result.changed_by_column, top_columns)
         parts = ", ".join(f"`{col}` ({n})" for col, n in top)
-        rest = len(result.changed_by_column) - len(top)
         if rest > 0:
             parts += f", … +{rest} more"
         lines += [f"**Top changed columns:** {parts}", ""]

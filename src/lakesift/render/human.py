@@ -5,7 +5,12 @@ from __future__ import annotations
 from rich.console import Console
 from rich.markup import escape
 
-from lakesift.render._shared import DEFAULT_MAX_ROWS, fmt_pairs as _fmt_pairs
+from lakesift.render._shared import (
+    DEFAULT_MAX_ROWS,
+    fmt_pairs as _fmt_pairs,
+    sampled,
+    top_split,
+)
 from lakesift.result import DiffResult
 
 
@@ -46,9 +51,8 @@ def render_human(
 
     # Top-K columns by changed cells (to see at a glance where things shifted).
     if top_columns > 0 and result.changed_by_column:
-        top = result.changed_by_column[:top_columns]
+        top, rest = top_split(result.changed_by_column, top_columns)
         parts = ", ".join(f"{escape(col)} ({n})" for col, n in top)
-        rest = len(result.changed_by_column) - len(top)
         if rest > 0:
             parts += f", [dim]… +{rest} more[/dim]"
         console.print(f"  [dim]top changed columns:[/dim] {parts}")
@@ -57,14 +61,12 @@ def render_human(
         return
 
     def _emit(items, total, render, prefix, style):
-        # items may be a streaming iterator — don't materialize, stop at max_rows.
-        shown = 0
-        for it in items:
-            if shown >= max_rows:
-                console.print(f"  [dim]... +{total - max_rows} more[/dim]")
-                break
-            console.print(f"[{style}]{prefix}[/{style}] {escape(render(it))}")
-            shown += 1
+        # items may be a streaming iterator — sampled() caps it without materializing.
+        for kind, val in sampled(items, total, max_rows):
+            if kind == "more":
+                console.print(f"  [dim]... +{val} more[/dim]")
+            else:
+                console.print(f"[{style}]{prefix}[/{style}] {escape(render(val))}")
 
     _emit(result.removed, s["removed"], _fmt_pairs, "-", "red")
     _emit(result.added, s["added"], _fmt_pairs, "+", "green")
