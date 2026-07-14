@@ -237,6 +237,9 @@ def main(
         err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=2)
 
+    # Only override the renderer's default row cap when --sample was given.
+    row_cap = {} if sample is None else {"max_rows": sample}
+
     # result owns a live connection — close it for sure with `with`.
     with result:
         if json_out:
@@ -244,14 +247,12 @@ def main(
             result.write_json(sys.stdout)
             sys.stdout.write("\n")
         elif markdown:
-            kw = {} if sample is None else {"max_rows": sample}
             sys.stdout.write(
-                render_markdown(result, summary_only=summary, top_columns=top, **kw)
+                render_markdown(result, summary_only=summary, top_columns=top, **row_cap)
             )
         else:
-            kw = {} if sample is None else {"max_rows": sample}
             render_human(
-                result, console=console, summary_only=summary, top_columns=top, **kw
+                result, console=console, summary_only=summary, top_columns=top, **row_cap
             )
         empty = result.is_empty()
 

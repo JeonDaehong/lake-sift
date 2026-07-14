@@ -36,6 +36,15 @@ def _schema_of(rel: "duckdb.DuckDBPyRelation") -> dict[str, str]:
     return {name: str(t) for name, t in zip(rel.columns, rel.types)}
 
 
+def _schema_of_arrow(con, arrow_schema) -> dict[str, str]:
+    """DuckDB type dict for a pyarrow.Schema, without reading data.
+
+    An empty Arrow table carries the schema through DuckDB, so the type strings match how
+    real relations report theirs (both go through the same engine).
+    """
+    return _schema_of(con.from_arrow(arrow_schema.empty_table()))
+
+
 def _probe_schema(con, source: "Source") -> dict[str, str]:
     """Get the source's column name -> type without reading data (when possible).
 
@@ -47,7 +56,7 @@ def _probe_schema(con, source: "Source") -> dict[str, str]:
     """
     arrow_schema = getattr(source, "arrow_schema", None)
     if arrow_schema is not None:
-        return _schema_of(con.from_arrow(arrow_schema().empty_table()))
+        return _schema_of_arrow(con, arrow_schema())
     return _schema_of(source.to_relation(con))
 
 

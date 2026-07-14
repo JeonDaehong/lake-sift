@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Iterator, Sequence, Tuple
 
+from lakesift.result import SchemaChange
+
 # With no --sample, cap the sample rows so a huge diff doesn't flood the console
 # or bloat a PR comment. Shared so both renderers default identically.
 DEFAULT_MAX_ROWS = 20
@@ -12,6 +14,20 @@ DEFAULT_MAX_ROWS = 20
 def fmt_pairs(d: dict) -> str:
     """Render a dict (a row, or a row's key) as `col=value` pairs."""
     return ", ".join(f"{k}={v!r}" for k, v in d.items())
+
+
+def schema_detail(c: SchemaChange) -> str:
+    """Type trailer for a schema change, including its leading separator.
+
+    ` (type)` for an added/removed column, `: old → new` for a type change. Both
+    renderers append this after the (differently-styled) symbol + column name, so the
+    per-kind dispatch lives here rather than being duplicated in each renderer.
+    """
+    if c.kind == "added":
+        return f" ({c.new_type})"
+    if c.kind == "removed":
+        return f" ({c.old_type})"
+    return f": {c.old_type} → {c.new_type}"
 
 
 def top_split(

@@ -9,9 +9,13 @@ from lakesift.render._shared import (
     DEFAULT_MAX_ROWS,
     fmt_pairs as _fmt_pairs,
     sampled,
+    schema_detail,
     top_split,
 )
 from lakesift.result import DiffResult
+
+# Per-kind (color, symbol) for a schema-change line; the shared type trailer follows.
+_SCHEMA_STYLE = {"added": ("green", "+"), "removed": ("red", "-"), "type_changed": ("yellow", "~")}
 
 
 def render_human(
@@ -30,16 +34,10 @@ def render_human(
 
     # Schema deltas (escape column names/types so they aren't read as rich markup).
     for c in result.schema_changes:
-        col = escape(c.column)
-        if c.kind == "added":
-            console.print(f"[green]+ column[/green] {col} ({escape(str(c.new_type))})")
-        elif c.kind == "removed":
-            console.print(f"[red]- column[/red] {col} ({escape(str(c.old_type))})")
-        else:
-            console.print(
-                f"[yellow]~ column[/yellow] {col}: "
-                f"{escape(str(c.old_type))} → {escape(str(c.new_type))}"
-            )
+        color, sym = _SCHEMA_STYLE[c.kind]
+        console.print(
+            f"[{color}]{sym} column[/{color}] {escape(c.column)}{escape(schema_detail(c))}"
+        )
 
     s = result.summary()
     console.print(

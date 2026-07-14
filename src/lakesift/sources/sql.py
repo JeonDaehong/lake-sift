@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Union
 
 import pyarrow as pa
 
-from lakesift.core import DiffError, _probe_schema, _schema_of
+from lakesift.core import DiffError, _probe_schema, _schema_of_arrow
 from lakesift.sources._deps import require
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ class SqlSchemaSource:
         mapping: dict[str, dict[str, str]] = {}
         for name, up in self.upstreams.items():
             if isinstance(up, pa.Schema):
-                mapping[name] = _schema_of(con.from_arrow(up.empty_table()))
+                mapping[name] = _schema_of_arrow(con, up)
             else:
                 mapping[name] = _probe_schema(con, up)
         return mapping

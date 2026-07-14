@@ -8,9 +8,13 @@ from lakesift.render._shared import (
     DEFAULT_MAX_ROWS,
     fmt_pairs as _fmt_pairs,
     sampled,
+    schema_detail,
     top_split,
 )
 from lakesift.result import DiffResult
+
+# Per-kind bullet symbol for a schema-change line; the shared type trailer follows.
+_SCHEMA_SYMBOL = {"added": "➕", "removed": "➖", "type_changed": "🔁"}
 
 
 def _sample(items, total: int, render, max_rows: int) -> list[str]:
@@ -61,12 +65,7 @@ def render_markdown(
         lines.append("**Schema changes**")
         lines.append("")
         for c in result.schema_changes:
-            if c.kind == "added":
-                lines.append(f"- ➕ `{c.column}` ({c.new_type})")
-            elif c.kind == "removed":
-                lines.append(f"- ➖ `{c.column}` ({c.old_type})")
-            else:
-                lines.append(f"- 🔁 `{c.column}`: {c.old_type} → {c.new_type}")
+            lines.append(f"- {_SCHEMA_SYMBOL[c.kind]} `{c.column}`{schema_detail(c)}")
         lines.append("")
 
     if summary_only:
