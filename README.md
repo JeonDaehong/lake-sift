@@ -41,6 +41,10 @@ unbound:
 **lake-sift's niche:** engine-neutral · single-node · framework-free ·
 format-native · review-oriented output.
 
+Being format-native also buys speed rather than costing it: `--preview` bounds a diff from
+Iceberg's own manifests in milliseconds, reading no data — no Spark, and no change
+tracking that had to be enabled before the change you want to inspect.
+
 ## Features
 
 - **Schema diff** — added / removed columns, type changes.
@@ -51,6 +55,7 @@ format-native · review-oriented output.
 - **Column scoping** — `--columns` (only these) / `--exclude` (skip these, e.g. `updated_at`).
 - **Schema-only mode** — `--schema-only` compares just the schemas (no key, no data read) as a pre-execution / contract gate.
 - **Predicted-schema diff** — `SqlSchemaSource` infers a SQL query's output schema (via SQLGlot) to gate a change *before it runs*.
+- **Diff preview** — `--preview` bounds a diff from Iceberg metadata alone (no data read): what it would cost, which partitions can differ, and a *proof* that a change touched no existing row.
 - **Output modes** — human-readable color, machine-readable JSON, a Markdown report (for PR comments / CI step summaries), or summary-only.
 - **CI-friendly exit codes** — `0` equal, `1` differences, `2` error.
 - **Single-node engine** — heavy comparison runs as DuckDB SQL; Python is a thin orchestrator.
@@ -89,7 +94,29 @@ lake-sift "iceberg:prod/sales.orders" "sql:model.sql" --schema-only \
 # - column discount (DOUBLE)     ← the downstream contract would break; exit 1 fails the check
 ```
 
-### 3. Audit a change before you publish it (Write-Audit-Publish)
+### 3. Know a diff's blast radius *before* you run it
+
+Diffing a billion-row table is expensive, and most of the time the answer is "almost
+nothing changed". Ask the table's own metadata first — `--preview` reads manifests only,
+never data, and answers in milliseconds:
+
+```bash
+lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k order_id --preview
+# blast radius (from metadata only, no data read)
+#   files            2 of 822 differ  410 shared → provably identical
+#   rows to scan     12,480 of 2,400,012,480  0.0% of a full diff
+#   bytes to scan    8.4 MB of 91.2 GB
+#   partitions       1 touched  dt='2026-07-15'
+# proof (from key ranges)
+#   provably added   12,480 rows
+#   provably removed 0 rows
+#   may have changed at most 0 rows  pure append/delete: no existing row is touched
+```
+
+The last line is a *proof*, not an estimate: nothing existing was modified. Details in
+[Metadata-only diff preview](#metadata-only-diff-preview).
+
+### 4. Audit a change before you publish it (Write-Audit-Publish)
 
 Write to an isolated staging branch, diff it against `main`, and only merge if the
 diff is what you expect. The non-zero exit code makes it an orchestration gate:
@@ -99,7 +126,7 @@ lake-sift "iceberg:prod/sales.orders@main" "iceberg:prod/sales.orders@staging" -
   || echo "staging differs from main — review before publishing"
 ```
 
-### 4. Validate a migration, backfill, or export
+### 5. Validate a migration, backfill, or export
 
 Did the Parquet export match the live table? Did a backfill land exactly the rows
 you expected? Mix formats freely — the diff reads the same across all of them:
@@ -109,7 +136,7 @@ lake-sift export.parquet "iceberg:prod/sales.orders@1042" -k order_id   # export
 lake-sift "delta:/data/sales@11" "delta:/data/sales@12" -k order_id     # audit two Delta versions
 ```
 
-### 5. Turn any of the above into a CI gate with a PR comment
+### 6. Turn any of the above into a CI gate with a PR comment
 
 Drop the diff into GitHub Actions: it writes the report to the job summary, posts
 it as a sticky PR comment, and fails the check when the data differs. Copy a
@@ -168,7 +195,7 @@ lake-sift prod.parquet pr.parquet -k id || echo "data change detected!"
 ```
 
 Flags: `--key/-k`, `--exclude/-x`, `--columns/-c`, `--json`, `--markdown`,
-`--summary`, `--schema-only`, `--structural-only`, `--upstream/-u`,
+`--summary`, `--schema-only`, `--structural-only`, `--preview`, `--upstream/-u`,
 `--sql-dialect`, `--allow-duplicates`, `--tolerance/-t`, `--ignore-case/-i`,
 `--sample/-n`, `--top`, `--version`.
 
@@ -246,6 +273,90 @@ metadata), so a dropped or retyped column is reported even when it isn't compare
 Without these flags, the full rows are read and shown as before. A column named in
 `--columns` that exists on *neither* side is treated as an error (exit `2`) rather
 than silently ignored, so a typo can't quietly turn a CI gate into a no-op.
+
+### Metadata-only diff preview
+
+`--preview` answers *"is it worth running the real diff, and what would it cost?"* — from
+the table's metadata alone, reading **no data at all**. It is the value-level counterpart
+to `--schema-only`: that gate moves a *schema* check before the pipeline runs, this one
+bounds a *value* diff before it reads a byte.
+
+It works because of one fact about the lakehouse: **data files are immutable, and
+snapshots share them.** A file present on both sides is provably yielding identical rows
+on both sides, so it can be excluded without opening it:
+
+> real diff ⊆ rows in (left-only files ∪ right-only files)
+
+That is a **sound upper bound** — never a false negative. Per-column bounds in the
+manifests tighten it further: a left-only file whose **key range** overlaps no right-only
+file cannot share a key with the other side, so its rows are pure removals — no cell of
+theirs can have "changed". When nothing overlaps at all, the change is provably a pure
+append/delete: not one existing row was touched.
+
+```bash
+# What could this snapshot change? (a few manifest reads; no data files opened)
+lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k order_id --preview
+
+# Audit a WAP staging branch before merging — instantly
+lake-sift "iceberg:prod/sales.orders@main" "iceberg:prod/sales.orders@staging" -k order_id --preview
+
+# JSON / Markdown for a CI step summary or PR comment
+lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k order_id --preview --json
+```
+
+`--key` is optional: without it you still get the cost (files/rows/bytes/partitions), and
+with it you also get the key-range proofs. Exit codes follow the usual convention, with a
+sharper meaning: **`0` = provably identical** (no file differs — certain, with no data
+read), `1` = the sides *may* differ, `2` = error.
+
+**What it proves, and what it doesn't.** These are the honest limits:
+
+| Claim | Status |
+|---|---|
+| No file differs → the sides are **identical** | Proven |
+| Key ranges don't overlap → **no existing row was modified** | Proven |
+| `provably added` / `provably removed` row counts | Lower bounds on the real diff |
+| `may have changed: at most N` | Upper bound on the real diff |
+| Files differ → the *values* differ | **Not** implied — a compaction rewrites files without changing a value, so the bound is loose but never wrong |
+| A column is **unchanged** | **Not** provable — bounds are aggregates, and values can permute inside an unchanged range |
+
+Preview never claims more than it can prove, so a `0` is safe to gate on and a non-zero
+means "read the data to know". Requires the `iceberg` extra; both sides must be Iceberg
+sources (any other source exits `2` rather than silently guessing). It is most useful on
+two snapshots/branches of the *same* table, where file sharing is high — on unrelated
+tables it stays correct and simply reports that a full scan is needed.
+
+Two details follow from "a shared file must yield identical rows on both sides":
+
+- **Merge-on-read deletes are handled.** A delete file is part of a data file's identity,
+  so a shared data file carrying a different delete set is correctly treated as differing.
+  The same goes for the column projection: the same bytes read through a different
+  `selected_fields` are not the same rows, and are not reported as shared.
+- **A `row_filter` cannot be previewed** (exit `2`). Manifests count *whole files*, and
+  planning only prunes files that cannot match — nothing says how many rows inside a
+  surviving file pass the filter. Every count would be an overcount, so preview refuses
+  rather than report a number that isn't true. Preview the unfiltered source, or run the
+  full diff (which filters normally).
+
+From Python, `preview(left, right, key=[...])` returns a `PreviewResult`; it reads no data
+and owns no connection, so it needs no closing:
+
+```python
+from lakesift import preview, IcebergSource
+
+p = preview(
+    IcebergSource.from_catalog("prod", "sales.orders", ref="main"),
+    IcebergSource.from_catalog("prod", "sales.orders", ref="staging"),
+    key=["order_id"],
+)
+p.is_empty()          # True -> provably identical, and nothing was read
+p.is_pure_append()    # True -> no existing row can have been modified
+p.rows_to_scan        # what a real diff would still have to read
+p.scan_fraction       # ... as a share of a full diff (0.0 - 1.0)
+p.max_changed_rows    # upper bound on rows whose cells may have changed
+p.partitions_touched  # [{"dt": "2026-07-15"}, ...]
+p.to_dict()           # / p.to_json()
+```
 
 ### Iceberg snapshots & branches
 
@@ -450,6 +561,7 @@ platform.
 lake-sift/
 ├── src/lakesift/
 │   ├── core.py          # diff engine (DuckDB SQL generation/execution)
+│   ├── preview.py       # metadata-only blast-radius preview (reads no data)
 │   ├── result.py        # DiffResult, CellChange, SchemaChange
 │   ├── sources/         # input adapters (parquet, iceberg, delta, sql schema prediction)
 │   ├── render/          # human (color) and json renderers

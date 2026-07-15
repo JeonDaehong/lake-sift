@@ -253,3 +253,30 @@ def test_cli_structural_only_ignores_type_change(tmp_path):
     assert runner.invoke(app, base).exit_code == 1  # type change detected
     # structurally the columns are identical -> --structural-only clears it (exit 0)
     assert runner.invoke(app, base + ["--structural-only"]).exit_code == 0
+
+
+def test_preview_rejects_a_non_metadata_source(tmp_path):
+    """--preview needs a source that can describe its data files; Parquet cannot."""
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})
+    r = runner.invoke(app, [a, b, "--preview", "-k", "id"])
+    assert r.exit_code == 2
+    assert "data files" in r.stderr
+
+
+def test_preview_does_not_require_a_key(tmp_path):
+    """--key is optional under --preview (it only unlocks the key-range proofs), so the
+    run must fail on the source, not on a missing key."""
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})
+    r = runner.invoke(app, [a, b, "--preview"])
+    assert r.exit_code == 2
+    assert "--key is required" not in r.stderr
+
+
+def test_preview_and_schema_only_are_exclusive(tmp_path):
+    a = _write(tmp_path / "a.parquet", {"id": [1], "v": ["a"]})
+    b = _write(tmp_path / "b.parquet", {"id": [1], "v": ["a"]})
+    r = runner.invoke(app, [a, b, "--preview", "--schema-only"])
+    assert r.exit_code == 2
+    assert "cannot be combined" in r.stderr

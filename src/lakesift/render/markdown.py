@@ -4,17 +4,68 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from lakesift.render._shared import (
     DEFAULT_MAX_ROWS,
     fmt_pairs as _fmt_pairs,
+    preview_bounds,
+    preview_facts,
     sampled,
     schema_detail,
     top_split,
 )
 from lakesift.result import DiffResult
 
+if TYPE_CHECKING:
+    from lakesift.preview import PreviewResult
+
 # Per-kind bullet symbol for a schema-change line; the shared type trailer follows.
 _SCHEMA_SYMBOL = {"added": "➕", "removed": "➖", "type_changed": "🔁"}
+
+
+def _schema_bullets(result) -> list[str]:
+    """Schema deltas as Markdown bullets, with a heading (empty when there are none)."""
+    if not result.schema_changes:
+        return []
+    return (
+        ["**Schema changes**", ""]
+        + [f"- {_SCHEMA_SYMBOL[c.kind]} `{c.column}`{schema_detail(c)}" for c in result.schema_changes]
+        + [""]
+    )
+
+
+def render_preview_markdown(preview: "PreviewResult", *, title: str = "lake-sift preview") -> str:
+    """Render a metadata-only preview as a Markdown report (PR comment / step summary)."""
+    lines: list[str] = [f"### {title}", ""]
+
+    if preview.is_empty():
+        lines.append(
+            "✅ **Provably identical** — every data file is shared between the two sides, "
+            "so no data had to be read."
+        )
+        return "\n".join(lines) + "\n"
+
+    lines += _schema_bullets(preview)
+    lines += [
+        "**Blast radius** — from metadata only, no data read",
+        "",
+        "| | | |",
+        "| --- | ---: | --- |",
+    ]
+    lines += [f"| {label} | {value} | {note} |" for label, value, note in preview_facts(preview)]
+    lines.append("")
+
+    bounds = preview_bounds(preview)
+    if bounds:
+        lines += ["**Proof** — from key ranges", "", "| | | |", "| --- | ---: | --- |"]
+        lines += [f"| {label} | {value} | {note} |" for label, value, note in bounds]
+        lines.append("")
+
+    if preview.has_deletes:
+        lines += ["> Note: merge-on-read delete files present.", ""]
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _sample(items, total: int, render, max_rows: int) -> list[str]:
@@ -60,13 +111,7 @@ def render_markdown(
             parts += f", … +{rest} more"
         lines += [f"**Top changed columns:** {parts}", ""]
 
-    # Schema deltas.
-    if result.schema_changes:
-        lines.append("**Schema changes**")
-        lines.append("")
-        for c in result.schema_changes:
-            lines.append(f"- {_SCHEMA_SYMBOL[c.kind]} `{c.column}`{schema_detail(c)}")
-        lines.append("")
+    lines += _schema_bullets(result)
 
     if summary_only:
         return "\n".join(lines).rstrip() + "\n"

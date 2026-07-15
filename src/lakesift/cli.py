@@ -15,8 +15,9 @@ from rich.console import Console
 
 from lakesift import __version__
 from lakesift.core import DiffError, diff, schema_diff
-from lakesift.render.human import render_human
-from lakesift.render.markdown import render_markdown
+from lakesift.preview import preview as preview_diff
+from lakesift.render.human import render_human, render_preview_human
+from lakesift.render.markdown import render_markdown, render_preview_markdown
 from lakesift.sources.base import Source
 from lakesift.sources.delta import DeltaSource
 from lakesift.sources.iceberg import IcebergSource
@@ -159,6 +160,13 @@ def main(
         help="Compare only schemas, reading no data (no --key needed). A pre-execution / "
         "contract gate: catch added/removed/retyped columns without materializing rows.",
     ),
+    preview: bool = typer.Option(
+        False,
+        "--preview",
+        help="Estimate the diff's blast radius from table metadata alone, reading no data "
+        "(Iceberg). Shows what a full diff would cost and proves what it cannot find. "
+        "--key is optional but unlocks the key-range proofs.",
+    ),
     structural_only: bool = typer.Option(
         False,
         "--structural-only",
@@ -207,9 +215,28 @@ def main(
     err = Console(stderr=True)
 
     keys = _split(key)
-    if not schema_only and not keys:
-        err.print("[red]error:[/red] --key is required (unless --schema-only).")
+    if not schema_only and not preview and not keys:
+        err.print("[red]error:[/red] --key is required (unless --schema-only or --preview).")
         raise typer.Exit(code=2)
+    if schema_only and preview:
+        err.print("[red]error:[/red] --schema-only and --preview cannot be combined.")
+        raise typer.Exit(code=2)
+
+    # --preview reads no data and owns no connection, so it renders and exits on its own.
+    if preview:
+        try:
+            p = preview_diff(_source(left), _source(right), key=keys)
+        except Exception as e:
+            err.print(f"[red]error:[/red] {e}")
+            raise typer.Exit(code=2)
+        if json_out:
+            sys.stdout.write(p.to_json() + "\n")
+        elif markdown:
+            sys.stdout.write(render_preview_markdown(p))
+        else:
+            render_preview_human(p, console=console)
+        # 0 only when the sides are provably identical; otherwise they *may* differ.
+        raise typer.Exit(code=0 if p.is_empty() else 1)
 
     try:
         upstreams = _parse_upstreams(upstream)

@@ -1,7 +1,9 @@
 """lake-sift — value-level data diff (Parquet · Iceberg · Delta, single-node, no Spark)."""
 
 from lakesift.core import diff, schema_diff
+from lakesift.preview import PreviewResult, preview
 from lakesift.result import CellChange, DiffResult, SchemaChange
+from lakesift.sources.base import DataFileStats
 from lakesift.sources.delta import DeltaSource
 from lakesift.sources.iceberg import IcebergSource
 from lakesift.sources.parquet import ParquetSource
@@ -10,9 +12,12 @@ from lakesift.sources.sql import SqlSchemaSource
 __all__ = [
     "diff",
     "schema_diff",
+    "preview",
     "DiffResult",
+    "PreviewResult",
     "CellChange",
     "SchemaChange",
+    "DataFileStats",
     "ParquetSource",
     "IcebergSource",
     "DeltaSource",
