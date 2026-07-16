@@ -142,8 +142,10 @@ def test_source_defaults_to_parquet():
 
 
 def _patch_from_catalog(monkeypatch, captured):
-    def fake_from_catalog(catalog, identifier, *, snapshot_id=None, ref=None):
-        captured.update(catalog=catalog, identifier=identifier, snapshot_id=snapshot_id, ref=ref)
+    def fake_from_catalog(catalog, identifier, *, snapshot_id=None, ref=None, parent=False):
+        captured.update(
+            catalog=catalog, identifier=identifier, snapshot_id=snapshot_id, ref=ref, parent=parent
+        )
         return object()  # validate the args without an actual catalog connection
 
     monkeypatch.setattr(
@@ -156,10 +158,16 @@ def test_source_iceberg_parses_catalog_identifier_and_snapshot(monkeypatch):
     _patch_from_catalog(monkeypatch, captured)
 
     _source("iceberg:prod/sales.orders@123")
-    assert captured == {"catalog": "prod", "identifier": "sales.orders", "snapshot_id": 123, "ref": None}
+    assert captured == {
+        "catalog": "prod",
+        "identifier": "sales.orders",
+        "snapshot_id": 123,
+        "ref": None,
+        "parent": False,
+    }
 
     _source("iceberg:prod/sales.orders")  # snapshot/ref omitted -> both None
-    assert captured["snapshot_id"] is None and captured["ref"] is None
+    assert captured["snapshot_id"] is None and captured["ref"] is None and captured["parent"] is False
 
 
 def test_source_iceberg_parses_branch_or_tag_ref(monkeypatch):
@@ -169,6 +177,22 @@ def test_source_iceberg_parses_branch_or_tag_ref(monkeypatch):
 
     _source("iceberg:prod/sales.orders@staging")
     assert captured["ref"] == "staging" and captured["snapshot_id"] is None
+
+
+def test_source_iceberg_parses_parent_marker(monkeypatch):
+    # a trailing '^' means "the parent of that snapshot" (isolate a single commit)
+    captured = {}
+    _patch_from_catalog(monkeypatch, captured)
+
+    _source("iceberg:prod/sales.orders@^")  # bare '^' -> parent of the current snapshot
+    assert captured["parent"] is True
+    assert captured["snapshot_id"] is None and captured["ref"] is None
+
+    _source("iceberg:prod/sales.orders@1042^")  # parent of an explicit snapshot id
+    assert captured["parent"] is True and captured["snapshot_id"] == 1042 and captured["ref"] is None
+
+    _source("iceberg:prod/sales.orders@main^")  # parent of a branch head
+    assert captured["parent"] is True and captured["ref"] == "main" and captured["snapshot_id"] is None
 
 
 def test_source_iceberg_bad_format_raises():

@@ -34,6 +34,7 @@ class IcebergSource:
         *,
         snapshot_id: int | None = None,
         ref: str | None = None,
+        parent: bool = False,
         row_filter: Any = None,
         selected_fields: Sequence[str] | None = None,
     ):
@@ -43,6 +44,12 @@ class IcebergSource:
         # pattern: diff a staging branch against main before merging. Mutually
         # exclusive with snapshot_id; ref takes precedence if both are given.
         self.ref = ref
+        # Point at the *parent* of the resolved snapshot instead of the snapshot
+        # itself (the `@^` operand). This makes "just before my job ran" addressable
+        # from a table that only records where it is now: diff the current snapshot
+        # against its parent to isolate exactly what a single commit did. See the
+        # caveat on `_parent_snapshot_id` about multi-snapshot commits.
+        self.parent = parent
         self.row_filter = row_filter
         self.selected_fields = tuple(selected_fields) if selected_fields else ("*",)
 
@@ -54,6 +61,7 @@ class IcebergSource:
         *,
         snapshot_id: int | None = None,
         ref: str | None = None,
+        parent: bool = False,
         row_filter: Any = None,
         selected_fields: Sequence[str] | None = None,
         **properties: Any,
@@ -71,6 +79,7 @@ class IcebergSource:
             tbl,
             snapshot_id=snapshot_id,
             ref=ref,
+            parent=parent,
             row_filter=row_filter,
             selected_fields=selected_fields,
         )
@@ -82,16 +91,57 @@ class IcebergSource:
 
         return schema_to_pyarrow(self.table.schema())
 
+    def _base_snapshot(self) -> Any:
+        """The snapshot this source resolves to before `parent` is applied.
+
+        ref > snapshot_id > current snapshot, mirroring `_scan`'s precedence.
+        """
+        if self.ref is not None:
+            snap_ref = self.table.refs().get(self.ref)
+            if snap_ref is None:
+                raise DiffError(f"Iceberg ref {self.ref!r} not found.")
+            return self.table.snapshot_by_id(snap_ref.snapshot_id)
+        if self.snapshot_id is not None:
+            snap = self.table.snapshot_by_id(self.snapshot_id)
+            if snap is None:
+                raise DiffError(f"Iceberg snapshot {self.snapshot_id} not found.")
+            return snap
+        return self.table.current_snapshot()
+
+    def _parent_snapshot_id(self) -> int:
+        """Resolve the `@^` target: the parent of the base snapshot.
+
+        Caveat: this assumes the job whose effect you want to isolate committed a
+        *single* snapshot. Some writers split one logical change across two snapshots
+        (pyiceberg `overwrite`, for instance, emits a DELETE then an APPEND), in which
+        case `@^` steps back only one of them. Spark's `INSERT INTO`/`MERGE` commit
+        atomically and are the intended fit. To be exact regardless of the writer,
+        stamp the before/after snapshot ids yourself around the job.
+        """
+        base = self._base_snapshot()
+        if base is None:
+            raise DiffError("table has no snapshots; @^ needs a snapshot to take the parent of.")
+        parent_id = base.parent_snapshot_id
+        if parent_id is None:
+            raise DiffError(
+                f"snapshot {base.snapshot_id} has no parent (it is the table's first "
+                "commit); @^ needs a prior snapshot to diff against."
+            )
+        return parent_id
+
     def _scan(self, fields: Sequence[str]) -> Any:
-        """Build the configured scan (snapshot/ref, row filter, projection)."""
+        """Build the configured scan (snapshot/ref/parent, row filter, projection)."""
         kwargs: dict[str, Any] = {"selected_fields": tuple(fields)}
-        # snapshot_id is ignored when a ref is given (use_ref selects the snapshot).
-        if self.snapshot_id is not None and self.ref is None:
+        if self.parent:
+            # Overrides ref/snapshot_id: scan the resolved snapshot's parent by id.
+            kwargs["snapshot_id"] = self._parent_snapshot_id()
+        elif self.snapshot_id is not None and self.ref is None:
+            # snapshot_id is ignored when a ref is given (use_ref selects the snapshot).
             kwargs["snapshot_id"] = self.snapshot_id
         if self.row_filter is not None:  # None -> use the scan default (ALWAYS_TRUE)
             kwargs["row_filter"] = self.row_filter
         scan = self.table.scan(**kwargs)
-        if self.ref is not None:  # scan a named branch/tag
+        if self.ref is not None and not self.parent:  # scan a named branch/tag
             scan = scan.use_ref(self.ref)
         return scan
 

@@ -11,6 +11,7 @@ pytest.importorskip("pyiceberg")
 from pyiceberg.catalog.sql import SqlCatalog  # noqa: E402
 
 from lakesift import IcebergSource, ParquetSource, diff  # noqa: E402
+from lakesift.core import DiffError  # noqa: E402
 
 
 def _ice(tmp_path, name: str, data: pa.Table):
@@ -86,6 +87,46 @@ def test_iceberg_branch_diff_wap(tmp_path):
         assert [row["id"] for row in r.added] == [4]
         assert list(r.removed) == []
         assert r.summary()["changed_cells"] == 0
+
+
+def test_iceberg_parent_isolates_the_last_commit(tmp_path):
+    """`@^` diffs the current snapshot against its parent: exactly what the job did.
+
+    Uses a single atomic append — the case `@^` is exact for (a writer that splits one
+    change across two snapshots, e.g. pyiceberg `overwrite`, is out of scope by design).
+    """
+    t = _ice(tmp_path, "par", pa.table({"id": pa.array([1, 2], pa.int64()), "v": ["a", "b"]}))
+    t.append(pa.table({"id": pa.array([3], pa.int64()), "v": ["c"]}))  # the audited commit
+    t.refresh()
+
+    now = IcebergSource(t)  # current snapshot
+    before = IcebergSource(t, parent=True)  # @^ -> its parent
+    with diff(before, now, key=["id"]) as r:
+        assert [row["id"] for row in r.added] == [3]  # the commit added exactly id=3
+        assert list(r.removed) == [] and r.summary()["changed_cells"] == 0
+
+
+def test_iceberg_parent_of_explicit_snapshot(tmp_path):
+    """`@<id>^` resolves the parent of that specific snapshot, not the current one."""
+    t = _ice(tmp_path, "pex", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"]}))
+    first = t.current_snapshot().snapshot_id
+    t.append(pa.table({"id": pa.array([2], pa.int64()), "v": ["b"]}))
+    t.refresh()
+    second = t.current_snapshot().snapshot_id
+
+    # parent of the second snapshot == the first snapshot's data
+    before = IcebergSource(t, snapshot_id=second, parent=True)
+    pinned = IcebergSource(t, snapshot_id=first)
+    with diff(before, pinned, key=["id"]) as r:
+        assert r.is_empty()
+
+
+def test_iceberg_parent_of_first_commit_errors(tmp_path):
+    """The table's first snapshot has no parent — @^ is a usage error there."""
+    t = _ice(tmp_path, "pfc", pa.table({"id": pa.array([1], pa.int64()), "v": ["a"]}))
+    src = IcebergSource(t, parent=True)
+    with pytest.raises(DiffError, match="no parent"):
+        src.to_relation(__import__("duckdb").connect())
 
 
 def test_iceberg_vs_parquet(tmp_path):

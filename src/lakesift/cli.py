@@ -101,20 +101,29 @@ def _split_ref(rest: str, what: str) -> tuple[str, str | None]:
 
 def _iceberg_source(rest: str) -> IcebergSource:
     # After '@': an integer is a snapshot id, anything else is a branch/tag ref name.
+    # A trailing '^' (e.g. @^, @1042^, @main^) means "the parent of that snapshot".
     rest, token = _split_ref(rest, "Iceberg ref/snapshot")
     snapshot_id: int | None = None
     ref: str | None = None
+    parent = False
     if token is not None:
-        try:
-            snapshot_id = int(token)
-        except ValueError:
-            ref = token  # non-integer -> a branch or tag name
+        if token.endswith("^"):
+            parent = True
+            token = token[:-1] or None  # bare '@^' -> parent of the current snapshot
+        if token is not None:
+            try:
+                snapshot_id = int(token)
+            except ValueError:
+                ref = token  # non-integer -> a branch or tag name
     catalog, sep, identifier = rest.partition("/")
     if not sep or not catalog or not identifier:
         raise DiffError(
-            "Iceberg source format: iceberg:<catalog>/<namespace>.<table>[@<snapshot_id-or-ref>]"
+            "Iceberg source format: "
+            "iceberg:<catalog>/<namespace>.<table>[@<snapshot_id-or-ref>[^]]"
         )
-    return IcebergSource.from_catalog(catalog, identifier, snapshot_id=snapshot_id, ref=ref)
+    return IcebergSource.from_catalog(
+        catalog, identifier, snapshot_id=snapshot_id, ref=ref, parent=parent
+    )
 
 
 def _delta_source(rest: str) -> DeltaSource:
@@ -140,11 +149,11 @@ def _version_callback(value: bool) -> None:
 def main(
     left: str = typer.Argument(
         ...,
-        help="Base (before) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap|ref>] · delta:<path>[@<ver>]",
+        help="Base (before) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap|ref>[^]] · delta:<path>[@<ver>]",
     ),
     right: str = typer.Argument(
         ...,
-        help="Compared (after) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap|ref>] · delta:<path>[@<ver>]",
+        help="Compared (after) source — Parquet path · iceberg:<catalog>/<ns>.<table>[@<snap|ref>[^]] · delta:<path>[@<ver>]",
     ),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Row identity key (comma-separated)"),
     exclude: Optional[str] = typer.Option(None, "--exclude", "-x", help="Columns to exclude from comparison"),
@@ -209,7 +218,9 @@ def main(
     For a reproducible diff, pin an immutable point in time on each side: a Parquet
     file, an Iceberg snapshot id (@1042), or a Delta version (@12). A moving Iceberg
     branch/tag (@main) advances with concurrent writes, so reserve it for the
-    isolated staging branch in Write-Audit-Publish.
+    isolated staging branch in Write-Audit-Publish. Append '^' to an Iceberg operand
+    (@^, @1042^, @main^) to reference that snapshot's parent — diff the current
+    snapshot against its parent to isolate exactly what the last commit changed.
     """
     console = Console()
     err = Console(stderr=True)

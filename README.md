@@ -116,7 +116,24 @@ lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k o
 The last line is a *proof*, not an estimate: nothing existing was modified. Details in
 [Metadata-only diff preview](#metadata-only-diff-preview).
 
-### 4. Audit a change before you publish it (Write-Audit-Publish)
+### 4. See exactly what a job just did (`@^`)
+
+A Spark job finished and committed to Iceberg. What did it actually change? The table
+only records where it is *now* — but every commit has a parent, so `@^` makes "just
+before this ran" addressable. Drop this in as the job's final task; concurrent writers
+don't pollute it (their rows land in later snapshots, outside the range):
+
+```bash
+# current snapshot vs. its parent = exactly this commit's added / removed / changed rows
+lake-sift "iceberg:prod/sales.orders@^" "iceberg:prod/sales.orders" -k order_id
+```
+
+Iceberg's own `snapshot.summary` counts *files*, so a one-cell fix reads as
+"deleted 2, added 2"; lake-sift reports the actual added/removed/**changed cells**.
+(`@^` isolates one commit cleanly when that commit is a single snapshot — see the
+caveat under [Iceberg snapshots & branches](#iceberg-snapshots--branches).)
+
+### 5. Audit a change before you publish it (Write-Audit-Publish)
 
 Write to an isolated staging branch, diff it against `main`, and only merge if the
 diff is what you expect. The non-zero exit code makes it an orchestration gate:
@@ -126,7 +143,7 @@ lake-sift "iceberg:prod/sales.orders@main" "iceberg:prod/sales.orders@staging" -
   || echo "staging differs from main — review before publishing"
 ```
 
-### 5. Validate a migration, backfill, or export
+### 6. Validate a migration, backfill, or export
 
 Did the Parquet export match the live table? Did a backfill land exactly the rows
 you expected? Mix formats freely — the diff reads the same across all of them:
@@ -136,7 +153,7 @@ lake-sift export.parquet "iceberg:prod/sales.orders@1042" -k order_id   # export
 lake-sift "delta:/data/sales@11" "delta:/data/sales@12" -k order_id     # audit two Delta versions
 ```
 
-### 6. Turn any of the above into a CI gate with a PR comment
+### 7. Turn any of the above into a CI gate with a PR comment
 
 Drop the diff into GitHub Actions: it writes the report to the job summary, posts
 it as a sticky PR comment, and fails the check when the data differs. Copy a
@@ -361,7 +378,7 @@ p.to_dict()           # / p.to_json()
 ### Iceberg snapshots & branches
 
 Either operand may be an Iceberg table instead of a file, using the form
-`iceberg:<catalog>/<namespace>.<table>[@<snapshot_id-or-ref>]`. After `@`, an
+`iceberg:<catalog>/<namespace>.<table>[@<snapshot_id-or-ref>[^]]`. After `@`, an
 integer is a snapshot id and anything else is a **branch or tag name**. Catalog
 connection details are read from PyIceberg's standard config
 ([`~/.pyiceberg.yaml`](https://py.iceberg.apache.org/configuration/) or
@@ -384,6 +401,30 @@ lake-sift "iceberg:prod/sales.orders@1001" "iceberg:prod/sales.orders@1042" -k o
 # Mix sources freely: validate a Parquet export against the live table
 lake-sift export.parquet "iceberg:prod/sales.orders" -k order_id
 ```
+
+**Isolate a single commit with `@^`.** Append `^` to an Iceberg operand to reference
+that snapshot's **parent**. This makes "the table just before my job ran" addressable
+from a table that only records where it is now — diff the current snapshot against its
+parent to see exactly what the last commit did, no matter what else ran concurrently
+(concurrent writes land in later snapshots, outside the range):
+
+```bash
+# What did the most recent commit change? (current snapshot vs. its parent)
+lake-sift "iceberg:prod/sales.orders@^" "iceberg:prod/sales.orders" -k order_id
+
+# The final task of a Spark job that just wrote the table — self-contained, no
+# "before" state to capture up front:
+#   lake-sift "iceberg:prod/sales.orders@^" "iceberg:prod/sales.orders" -k order_id --markdown
+```
+
+`@^` also composes with an explicit snapshot (`@1042^`) or a branch head (`@main^`).
+
+> **Caveat — one logical change, one snapshot.** `@^` steps back exactly one snapshot,
+> so it isolates a commit cleanly only when that commit *is* one snapshot. Spark's
+> `INSERT INTO`/`MERGE` commit atomically and fit. Some writers split a change across
+> two snapshots (pyiceberg's `overwrite` emits a DELETE then an APPEND), where `@^`
+> would step back only half of it. When in doubt, stamp the before/after snapshot ids
+> yourself around the job and diff those.
 
 **Write-Audit-Publish (WAP).** Write your changes to a staging branch, audit them by
 diffing against `main`, and only publish (merge) if the diff is what you expect. The
@@ -507,7 +548,8 @@ with diff(
 
 `IcebergSource` reads through PyIceberg and accepts a loaded table directly, or loads
 one from a catalog — with optional snapshot pinning, **branch/tag `ref`** (for
-Write-Audit-Publish), row filter, and field projection pushed down to the scan:
+Write-Audit-Publish), `parent=True` (the resolved snapshot's parent, i.e. `@^`), row
+filter, and field projection pushed down to the scan:
 
 ```python
 from lakesift import diff, IcebergSource
@@ -520,6 +562,12 @@ staging = IcebergSource.from_catalog(
 )
 
 with diff(main, staging, key=["order_id"]) as result:
+    print(result.summary())
+
+# Or isolate what the latest commit did: current snapshot vs. its parent
+before = IcebergSource.from_catalog("prod", "sales.orders", parent=True)
+after = IcebergSource.from_catalog("prod", "sales.orders")
+with diff(before, after, key=["order_id"]) as result:
     print(result.summary())
 ```
 
