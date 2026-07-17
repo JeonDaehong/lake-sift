@@ -56,6 +56,7 @@ tracking that had to be enabled before the change you want to inspect.
 - **Schema-only mode** — `--schema-only` compares just the schemas (no key, no data read) as a pre-execution / contract gate.
 - **Predicted-schema diff** — `SqlSchemaSource` infers a SQL query's output schema (via SQLGlot) to gate a change *before it runs*.
 - **Diff preview** — `--preview` bounds a diff from Iceberg metadata alone (no data read): what it would cost, which partitions can differ, and a *proof* that a change touched no existing row.
+- **Job auditing** — `audit(table, key=[...])` wraps a Python job and diffs the Iceberg table before vs after, isolating exactly what the job did (`@^` does the same for jobs you don't control).
 - **Output modes** — human-readable color, machine-readable JSON, a Markdown report (for PR comments / CI step summaries), or summary-only.
 - **CI-friendly exit codes** — `0` equal, `1` differences, `2` error.
 - **Single-node engine** — heavy comparison runs as DuckDB SQL; Python is a thin orchestrator.
@@ -131,7 +132,10 @@ lake-sift "iceberg:prod/sales.orders@^" "iceberg:prod/sales.orders" -k order_id
 Iceberg's own `snapshot.summary` counts *files*, so a one-cell fix reads as
 "deleted 2, added 2"; lake-sift reports the actual added/removed/**changed cells**.
 (`@^` isolates one commit cleanly when that commit is a single snapshot — see the
-caveat under [Iceberg snapshots & branches](#iceberg-snapshots--branches).)
+caveat under [Iceberg snapshots & branches](#iceberg-snapshots--branches).) When the
+job is your **own Python** — an Airflow `PythonOperator`, a Dagster op, a cron script —
+[`audit()`](#audit-a-python-job-audit) wraps the same before/after diff around the
+block and stays exact even when the write spans several snapshots.
 
 ### 5. Audit a change before you publish it (Write-Audit-Publish)
 
@@ -570,6 +574,33 @@ after = IcebergSource.from_catalog("prod", "sales.orders")
 with diff(before, after, key=["order_id"]) as result:
     print(result.summary())
 ```
+
+#### Audit a Python job (`audit()`)
+
+When the job is your own Python, you don't need to capture "before" by hand. Wrap the
+block in `audit()`: it stamps the Iceberg table's snapshot on entry, again on exit, and
+diffs the two — so `result` is exactly what the job added, removed, or changed.
+
+```python
+from lakesift import audit
+
+with audit(table, key=["order_id"]) as a:
+    run_nightly_backfill(table)      # commits one or more snapshots to `table`
+
+if not a.result.is_empty():          # the job touched existing rows — inspect before publishing
+    print(a.result.summary())        # {"added": 12480, "removed": 0, "changed": 3, ...}
+a.close()                            # release the result's DuckDB connection
+```
+
+It is orchestrator-agnostic (the block is just Python) and forwards extra keyword
+arguments to `diff()` (`exclude`, `columns`, `tolerance`, `ignore_case`,
+`allow_duplicates`). Unlike `@^`, which infers "before" as the current snapshot's parent,
+`audit()` records the real before/after snapshot ids — so it stays exact even when the
+write commits *several* snapshots (a pyiceberg `overwrite` emits a DELETE then an APPEND;
+`audit()` captures both). If the block raises, no diff is taken and the error propagates.
+Isolation is by time window, not author: a concurrent writer to the same table lands in
+the range too — use a WAP branch when you need hard isolation. Requires the `iceberg`
+extra.
 
 `DeltaSource` reads a table through delta-rs and accepts a path/URI or an
 already-loaded `DeltaTable`, with optional version time travel, column

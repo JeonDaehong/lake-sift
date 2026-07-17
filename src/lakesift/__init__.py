@@ -1,5 +1,6 @@
 """lake-sift — value-level data diff (Parquet · Iceberg · Delta, single-node, no Spark)."""
 
+from lakesift.audit import Audit, audit
 from lakesift.core import diff, schema_diff
 from lakesift.preview import PreviewResult, preview
 from lakesift.result import CellChange, DiffResult, SchemaChange
@@ -13,6 +14,8 @@ __all__ = [
     "diff",
     "schema_diff",
     "preview",
+    "audit",
+    "Audit",
     "DiffResult",
     "PreviewResult",
     "CellChange",
