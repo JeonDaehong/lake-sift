@@ -8,6 +8,7 @@ from lakesift.result import SchemaChange
 
 if TYPE_CHECKING:
     from lakesift.preview import PreviewResult
+    from lakesift.result import CellChange
 
 # With no --sample, cap the sample rows so a huge diff doesn't flood the console
 # or bloat a PR comment. Shared so both renderers default identically.
@@ -79,6 +80,15 @@ def preview_bounds(p: "PreviewResult") -> list[Tuple[str, str, str]]:
 def fmt_pairs(d: dict) -> str:
     """Render a dict (a row, or a row's key) as `col=value` pairs."""
     return ", ".join(f"{k}={v!r}" for k, v in d.items())
+
+
+def fmt_cell_change(c: "CellChange") -> str:
+    """A changed cell as `[key] column: old → new` — the value delta both renderers show.
+
+    Only the leading symbol/style differs between human and Markdown output, so the body
+    wording lives here once (mirroring how `schema_detail` centralizes schema changes).
+    """
+    return f"[{fmt_pairs(c.key)}] {c.column}: {c.old!r} → {c.new!r}"
 
 
 def schema_detail(c: SchemaChange) -> str:

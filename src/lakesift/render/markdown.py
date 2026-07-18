@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from lakesift.render._shared import (
     DEFAULT_MAX_ROWS,
+    fmt_cell_change,
     fmt_pairs as _fmt_pairs,
     preview_bounds,
     preview_facts,
@@ -121,7 +122,7 @@ def render_markdown(
     changed = _sample(
         result.changed_cells,
         s["changed_cells"],
-        lambda c: f"🔁 [{_fmt_pairs(c.key)}] {c.column}: {c.old!r} → {c.new!r}",
+        lambda c: f"🔁 {fmt_cell_change(c)}",
         max_rows,
     )
 

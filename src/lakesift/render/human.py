@@ -9,6 +9,7 @@ from rich.markup import escape
 
 from lakesift.render._shared import (
     DEFAULT_MAX_ROWS,
+    fmt_cell_change,
     fmt_pairs as _fmt_pairs,
     preview_bounds,
     preview_facts,
@@ -112,10 +113,4 @@ def render_human(
 
     _emit(result.removed, s["removed"], _fmt_pairs, "-", "red")
     _emit(result.added, s["added"], _fmt_pairs, "+", "green")
-    _emit(
-        result.changed_cells,
-        s["changed_cells"],
-        lambda c: f"[{_fmt_pairs(c.key)}] {c.column}: {c.old!r} → {c.new!r}",
-        "~",
-        "yellow",
-    )
+    _emit(result.changed_cells, s["changed_cells"], fmt_cell_change, "~", "yellow")
