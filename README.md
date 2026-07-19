@@ -59,6 +59,7 @@ tracking that had to be enabled before the change you want to inspect.
 - **Job auditing** — `audit(table, key=[...])` wraps a Python job and diffs the Iceberg table before vs after, isolating exactly what the job did (`@^` does the same for jobs you don't control).
 - **Output modes** — human-readable color, machine-readable JSON, a Markdown report (for PR comments / CI step summaries), or summary-only.
 - **CI-friendly exit codes** — `0` equal, `1` differences, `2` error.
+- **Web UI** — `lake-sift web` serves a run-history dashboard: trigger a diff from a form, browse past runs with status badges, and inspect results. Optional (`pip install "lake-sift[web]"`).
 - **Single-node engine** — heavy comparison runs as DuckDB SQL; Python is a thin orchestrator.
 
 ## Common workflows
@@ -187,6 +188,7 @@ pip install lake-sift             # Parquet diffing (no extra deps)
 pip install "lake-sift[iceberg]"  # with the Iceberg source (PyIceberg)
 pip install "lake-sift[delta]"    # with the Delta source (delta-rs)
 pip install "lake-sift[sql]"      # with SQL output-schema prediction (SQLGlot)
+pip install "lake-sift[web]"      # with the web UI (FastAPI + uvicorn)
 ```
 
 Or install from source (for development):
@@ -619,6 +621,81 @@ with diff(left, right, key=["order_id"]) as result:
     print(result.summary())
 ```
 
+### Web UI
+
+A small run-history dashboard over the same engine — for when you'd rather click than
+type, or want a shared record of who diffed what. It never re-implements comparison logic;
+it drives the same `diff` / `schema_diff` / `preview` the CLI does and keeps a history of
+the runs.
+
+```bash
+pip install "lake-sift[web]"
+lake-sift web                       # serves http://127.0.0.1:7438
+lake-sift web --host 0.0.0.0 --port 7438 --db ~/.lake-sift/history.db
+```
+
+The default port is **7438** (`SIFT` on a phone keypad) — chosen to avoid the usual
+open-source ports (Airflow/Jenkins 8080, Superset 8088, Grafana 3000, …).
+
+- **Runs** — every diff/schema/preview run with a status badge (identical · differences ·
+  schema change · running · error), what was compared, and how long it took.
+- **New diff** — a form for the two sources, key, and options; the same source syntax as the
+  CLI (`iceberg:…`, `delta:…`, a Parquet path).
+- **Run detail** — summary tiles, schema changes, changed cells, and a re-run / edit / delete
+  action. A running diff refreshes itself until it lands.
+- **Connections** — a read-only view of what this server can reach (see below).
+
+Run history is stored in a SQLite file (default `~/.lake-sift/history.db`). Only the diff
+*result* is saved — the row/cell listing is capped (200 rows / 500 cells); your data files
+are never copied into it.
+
+> The UI is not a scheduler. It has no cron, DAGs, retries, or auth — for orchestration,
+> call the CLI from Airflow/Dagster/CI and (optionally) run the UI alongside as a viewer.
+
+#### Deploying it — connections & credentials
+
+**lake-sift stores no credentials.** It reads your data through the environment the server
+process already runs in, exactly like the CLI. There is no lake-sift-specific connection
+file; each source uses its ecosystem's standard configuration:
+
+- **Iceberg** — the catalog connection and its object-store credentials come from PyIceberg's
+  standard config, [`~/.pyiceberg.yaml`](https://py.iceberg.apache.org/configuration/) (or
+  `PYICEBERG_CATALOG__*` env vars):
+
+  ```yaml
+  # ~/.pyiceberg.yaml
+  catalog:
+    prod:                              # referenced as  iceberg:prod/<namespace>.<table>
+      type: rest
+      uri: https://catalog.example.com
+      warehouse: s3://my-bucket/warehouse
+      s3.access-key-id: ...
+      s3.secret-access-key: ...
+      s3.region: ap-northeast-2
+  ```
+
+- **S3 / remote Parquet & Delta** — the standard AWS environment: `AWS_*` env vars, a shared
+  profile (`~/.aws/credentials`), or an instance/IRSA role. A `s3://…` Parquet path is read
+  through DuckDB's `httpfs` (loaded automatically) using a credential chain, so no extra
+  config is needed beyond the AWS environment:
+
+  ```bash
+  export AWS_ACCESS_KEY_ID=...
+  export AWS_SECRET_ACCESS_KEY=...
+  export AWS_REGION=ap-northeast-2
+  lake-sift web --host 0.0.0.0
+  ```
+
+- **Relational databases** — lake-sift does not connect to Postgres/MySQL/etc. directly; it
+  diffs lakehouse tables and files. A "database" connection exists only when an Iceberg
+  catalog is backed by one (a SQL/REST/Glue catalog), configured in `~/.pyiceberg.yaml` above.
+
+The **Connections** page (`/environment`) reports, read-only, *what is configured* — installed
+adapters, whether AWS credentials are detected (and from where), the region, whether `httpfs`
+is loadable, and the catalogs found in `~/.pyiceberg.yaml`. It shows only that something is
+set, **never a secret value** — there is no place in the UI to enter or store credentials, by
+design.
+
 ### Exit codes
 
 | Code | Meaning |
@@ -644,6 +721,7 @@ lake-sift/
 │   ├── result.py        # DiffResult, CellChange, SchemaChange
 │   ├── sources/         # input adapters (parquet, iceberg, delta, sql schema prediction)
 │   ├── render/          # human (color) and json renderers
+│   ├── web/             # optional web UI (FastAPI) — run-history dashboard
 │   └── cli.py           # typer CLI
 └── tests/
 ```

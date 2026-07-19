@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Run #{{ run.id }} · lake-sift{% endblock %}
+{% block head %}
+  {% if run.status == 'running' %}<meta http-equiv="refresh" content="2">{% endif %}
+{% endblock %}
+{% block body %}
+  {% set d = run.detail or {} %}
+  {% set s = run.summary or {} %}
+  <div class="crumb"><a href="/runs">Runs</a> / #{{ run.id }}</div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <h1 style="margin-bottom:6px">
+      <span class="dot {{ status_class(run.status) }}"></span>
+      Run #{{ run.id }} — {{ status_label(run.status) }}
+    </h1>
+    <div class="actions">
+      <a class="btn ghost" href="/runs/new?from_={{ run.id }}">Edit &amp; re-run</a>
+      <form method="post" action="/runs/{{ run.id }}/rerun" style="margin:0">
+        <button class="btn" type="submit">Re-run</button>
+      </form>
+      <form method="post" action="/runs/{{ run.id }}/delete" style="margin:0"
+            onsubmit="return confirm('Delete run #{{ run.id }} from history?')">
+        <button class="btn ghost danger" type="submit">Delete</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:6px">
+    <table style="border:none">
+      <tr><td class="kv" style="padding:2px 14px 2px 0">Mode</td>
+          <td>{{ kind_label(run.kind) }}</td></tr>
+      <tr><td class="kv" style="padding:2px 14px 2px 0">Left</td>
+          <td class="mono" style="overflow-wrap:anywhere">{{ run.left }} <span class="pill">{{ run.source_kind }}</span></td></tr>
+      <tr><td class="kv" style="padding:2px 14px 2px 0">Right</td>
+          <td class="mono" style="overflow-wrap:anywhere">{{ run.right }}</td></tr>
+      <tr><td class="kv" style="padding:2px 14px 2px 0">Key</td>
+          <td class="mono">{{ run.key or '—' }}</td></tr>
+      <tr><td class="kv" style="padding:2px 14px 2px 0">Duration</td>
+          <td>{{ run.duration_ms | dur }} · <span title="{{ run.created_at | when }}">{{ run.created_at | ago }}</span></td></tr>
+    </table>
+  </div>
+
+  {% if run.status == 'running' %}
+    <div class="empty">Running… this page refreshes automatically.</div>
+
+  {% elif run.status == 'error' %}
+    <h2>Error</h2>
+    <div class="err mono" style="white-space:pre-wrap">{{ run.error }}</div>
+
+  {% elif run.kind == 'preview' %}
+    {% set files = d.files or {} %}
+    {% set scan = d.scan or {} %}
+    {% set bounds = d.bounds or {} %}
+    <div class="tiles">
+      <div class="tile"><div class="k">Files differing</div><div class="v">{{ files.differing | comma }}</div></div>
+      <div class="tile"><div class="k">Rows to scan</div><div class="v">{{ scan.rows_to_scan | comma }}</div></div>
+      <div class="tile"><div class="k">Of total</div><div class="v">{{ scan.rows_total | comma }}</div></div>
+      <div class="tile"><div class="k">Scan share</div><div class="v">{{ '%.1f%%' % ((scan.fraction or 0) * 100) }}</div></div>
+    </div>
+    <h2>What the metadata proves</h2>
+    <table class="grid" style="max-width:520px">
+      <tr><td>Provably identical</td><td class="num">{{ 'yes' if d.identical else 'no' }}</td></tr>
+      <tr><td>Pure append/delete (no row modified)</td><td class="num">{{ 'yes' if bounds.pure_append else 'no' }}</td></tr>
+      <tr><td>Provably added rows</td><td class="num">{{ bounds.provably_added | comma }}</td></tr>
+      <tr><td>Provably removed rows</td><td class="num">{{ bounds.provably_removed | comma }}</td></tr>
+      <tr><td>Max rows that could have changed</td><td class="num">{{ bounds.max_changed_rows | comma }}</td></tr>
+      <tr><td>Partitions touched</td><td class="num">{{ d.partitions_touched | comma }}</td></tr>
+    </table>
+    {% if d.schema_changes %}{{ schema_table(d.schema_changes) }}{% endif %}
+
+  {% elif run.kind == 'schema' %}
+    {% if not d.schema_changes %}
+      <div class="empty">Schemas match — no columns added, removed, or retyped.</div>
+    {% else %}
+      {{ schema_table(d.schema_changes) }}
+    {% endif %}
+
+  {% else %}
+    {# ---- value diff ---- #}
+    <div class="tiles">
+      <div class="tile {{ 'hi' if s.added else '' }}"><div class="k">Added</div><div class="v">{{ s.added | comma }}</div></div>
+      <div class="tile {{ 'hi' if s.removed else '' }}"><div class="k">Removed</div><div class="v">{{ s.removed | comma }}</div></div>
+      <div class="tile {{ 'hi' if s.changed else '' }}"><div class="k">Rows changed</div><div class="v">{{ s.changed | comma }}</div></div>
+      <div class="tile {{ 'hi' if s.changed_cells else '' }}"><div class="k">Cells changed</div><div class="v">{{ s.changed_cells | comma }}</div></div>
+      <div class="tile"><div class="k">Schema Δ</div><div class="v">{{ s.schema_changes | comma }}</div></div>
+    </div>
+
+    {% if run.status == 'identical' %}
+      <div class="empty" style="margin-top:12px">The two sides are identical.</div>
+    {% endif %}
+
+    {% if d.schema_changes %}{{ schema_table(d.schema_changes) }}{% endif %}
+
+    {% if d.changed_by_column %}
+      <h2>Top changed columns</h2>
+      <table class="grid" style="max-width:420px">
+        <thead><tr><th>Column</th><th class="num">Changed cells</th></tr></thead>
+        <tbody>
+        {% for c in d.changed_by_column %}
+          <tr><td class="mono">{{ c.column }}</td><td class="num">{{ c.count | comma }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {% if d.changed_cells %}
+      <h2>Changed cells {{ sample_note(s.changed_cells, d.changed_cells, d.caps.cells) }}</h2>
+      <table class="grid">
+        <thead><tr><th>Key</th><th>Column</th><th>Old</th><th>New</th></tr></thead>
+        <tbody>
+        {% for c in d.changed_cells %}
+          <tr>
+            <td class="mono kv">{{ c.key }}</td>
+            <td class="mono">{{ c.column }}</td>
+            <td class="mono old">{{ c.old }}</td>
+            <td class="mono new">{{ c.new }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {{ rows_table('Added rows', d.added, s.added, d.caps.rows if d.caps else 0, 'new') }}
+    {{ rows_table('Removed rows', d.removed, s.removed, d.caps.rows if d.caps else 0, 'old') }}
+  {% endif %}
+
+  <p style="margin-top:22px"><a class="pill" href="/runs/{{ run.id }}/json">raw JSON</a></p>
+{% endblock %}
+
+{% macro schema_table(changes) %}
+  <h2>Schema changes</h2>
+  <table class="grid" style="max-width:640px">
+    <thead><tr><th>Column</th><th>Change</th><th>Old type</th><th>New type</th></tr></thead>
+    <tbody>
+    {% for c in changes %}
+      <tr>
+        <td class="mono">{{ c.column }}</td>
+        <td>{{ c.kind }}</td>
+        <td class="mono kv">{{ c.old_type or '—' }}</td>
+        <td class="mono kv">{{ c.new_type or '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endmacro %}
+
+{% macro sample_note(total, shown, cap) %}
+  {% if total and shown and total > (shown | length) %}
+    <span class="kv" style="font-weight:400">(showing {{ shown | length }} of {{ total | comma }})</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro rows_table(title, rows, total, cap, cls) %}
+  {% if rows %}
+    <h2>{{ title }} {{ sample_note(total, rows, cap) }}</h2>
+    <div style="overflow-x:auto">
+    <table class="grid">
+      <thead><tr>{% for col in rows[0].keys() %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr class="{{ cls }}">{% for v in r.values() %}<td class="mono">{{ v }}</td>{% endfor %}</tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  {% endif %}
+{% endmacro %}

@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}lake-sift{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2326333f'/%3E%3Cpath d='M3.5 4h9l-3.2 4v3.4L6.7 12.6V8z' fill='%234fb0e6'/%3E%3C/svg%3E">
+  {% block head %}{% endblock %}
+  <style>
+    :root {
+      --bg: #f4f5f7; --panel: #ffffff; --ink: #1c2126; --muted: #6b7683;
+      --line: #d9dee4; --line-soft: #e9edf1; --topbar: #26333f; --topbar-ink: #e8edf2;
+      --side: #2f3e4c; --side-ink: #c4cfd9; --side-active: #1b8fd1;
+      --mono: ui-monospace, "SFMono-Regular", "Consolas", "Menlo", monospace;
+      --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --ok: #2f9e44; --diff: #d6336c; --schema: #d9a200; --run: #1b8fd1; --err: #868e96;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--sans); font-size: 13px; color: var(--ink);
+           background: var(--bg); }
+    a { color: #1471b8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, .mono { font-family: var(--mono); }
+
+    .topbar { background: var(--topbar); color: var(--topbar-ink); height: 44px;
+              display: flex; align-items: center; padding: 0 16px; gap: 10px;
+              border-bottom: 1px solid #0c1319; }
+    .topbar .brand { font-weight: 700; letter-spacing: .2px; font-size: 15px; color: #fff; }
+    .topbar .brand b { color: #4fb0e6; font-weight: 700; }
+    .topbar .ver { color: #8ea1b0; font-size: 11px; font-family: var(--mono);
+                   border: 1px solid #3d4d5b; padding: 1px 6px; border-radius: 3px; }
+    .topbar .spacer { flex: 1; }
+    .topbar .tag { color: #8ea1b0; font-size: 12px; }
+    .help-btn { margin-left: 12px; background: transparent; color: #cdd8e1;
+                border: 1px solid #3d4d5b; border-radius: 3px; padding: 3px 10px;
+                font: 12px var(--sans); cursor: pointer; }
+    .help-btn:hover { background: #38495a; color: #fff; }
+
+    .modal { position: fixed; inset: 0; z-index: 50; display: flex;
+             align-items: flex-start; justify-content: center; padding: 60px 16px; }
+    .modal[hidden] { display: none; }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(18, 24, 30, .5); }
+    .modal-card { position: relative; background: var(--panel); border: 1px solid var(--line);
+                  border-radius: 6px; box-shadow: 0 12px 40px rgba(12, 19, 25, .3);
+                  width: 100%; max-width: 620px; max-height: 82vh; overflow: auto;
+                  animation: modal-in .12s ease-out; }
+    @keyframes modal-in { from { transform: translateY(-6px); opacity: .4; } to { transform: none; opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .modal-card { animation: none; } }
+    .modal-head { display: flex; align-items: center; justify-content: space-between;
+                  padding: 12px 18px; border-bottom: 1px solid var(--line);
+                  position: sticky; top: 0; background: var(--panel); }
+    .modal-head h2 { margin: 0; font-size: 15px; }
+    .modal-x { background: none; border: none; font-size: 22px; line-height: 1; color: var(--muted);
+               cursor: pointer; padding: 0 4px; }
+    .modal-x:hover { color: var(--ink); }
+    .modal-body { padding: 4px 20px 22px; }
+    .modal-body code { background: #f2f5f8; border: 1px solid var(--line-soft); border-radius: 3px;
+                       padding: 1px 5px; font-size: 12px; }
+    .modal-body .lead { color: var(--muted); font-size: 12.5px; line-height: 1.55; margin: 14px 0 2px; }
+    .help-sec { padding: 15px 0 5px; border-top: 1px solid var(--line-soft); }
+    .help-sec > h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+                     color: var(--muted); margin: 0 0 9px; font-weight: 600; }
+    .help-def { display: grid; grid-template-columns: 108px 1fr; gap: 7px 14px; align-items: baseline; margin: 0; }
+    .help-def dt { font-weight: 600; font-size: 12.5px; }
+    .help-def dd { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); }
+    .help-def dd b { font-weight: 600; }
+    .src-item { padding: 8px 0; }
+    .src-item + .src-item { border-top: 1px dashed var(--line-soft); }
+    .src-item code { display: inline-block; padding: 2px 7px; font-size: 12px; }
+    .src-item .d { color: var(--muted); font-size: 12px; margin-top: 5px; line-height: 1.5; }
+    .status-list { display: grid; grid-template-columns: 132px 1fr; gap: 9px 12px; align-items: center; }
+    .status-list .d { font-size: 12.5px; }
+    .help-p { font-size: 12.5px; line-height: 1.6; margin: 0; color: var(--ink); }
+
+    .layout { display: flex; min-height: calc(100vh - 44px); }
+    .side { width: 190px; background: var(--side); color: var(--side-ink);
+            padding: 10px 0; flex-shrink: 0; }
+    .side a { display: block; color: var(--side-ink); padding: 7px 16px; font-size: 13px;
+              border-left: 3px solid transparent; }
+    .side a:hover { background: #38495a; text-decoration: none; }
+    .side a.active { background: #38495a; border-left-color: var(--side-active);
+                     color: #fff; font-weight: 600; }
+    .side .grp { color: #74889a; font-size: 10.5px; text-transform: uppercase;
+                 letter-spacing: .8px; padding: 14px 16px 4px; }
+
+    .main { flex: 1; padding: 20px 26px; min-width: 0; }
+    .crumb { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    h1 { font-size: 19px; margin: 0 0 16px; font-weight: 600; }
+    h2 { font-size: 14px; margin: 22px 0 8px; font-weight: 600;
+         border-bottom: 1px solid var(--line); padding-bottom: 5px; }
+
+    .btn { display: inline-block; background: #2f6fb0; color: #fff; border: 1px solid #285f97;
+           padding: 6px 14px; border-radius: 3px; font-size: 13px; cursor: pointer;
+           font-family: var(--sans); }
+    .btn:hover { background: #285f97; text-decoration: none; }
+    .btn.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+    .btn.ghost:hover { background: #eef1f4; }
+
+    table.grid { width: 100%; border-collapse: collapse; background: var(--panel);
+                 border: 1px solid var(--line); }
+    table.grid th { text-align: left; font-size: 11px; text-transform: uppercase;
+                    letter-spacing: .4px; color: var(--muted); font-weight: 600;
+                    padding: 7px 10px; border-bottom: 1px solid var(--line);
+                    background: #f7f9fb; }
+    table.grid td { padding: 7px 10px; border-bottom: 1px solid var(--line-soft);
+                    vertical-align: top; }
+    table.grid tr:last-child td { border-bottom: none; }
+    table.grid tbody tr:hover { background: #f5f8fb; }
+    .num { text-align: right; font-family: var(--mono); }
+
+    .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px;
+             border-radius: 10px; color: #fff; white-space: nowrap; }
+    .st-ok { background: var(--ok); } .st-diff { background: var(--diff); }
+    .st-schema { background: var(--schema); } .st-error { background: var(--err); }
+    .st-running { background: var(--run); }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+           margin-right: 6px; vertical-align: middle; }
+    .dot.st-running { animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+
+    .pill { display: inline-block; font-size: 11px; color: var(--muted);
+            border: 1px solid var(--line); border-radius: 3px; padding: 1px 6px;
+            font-family: var(--mono); background: #fbfcfd; }
+
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+             padding: 14px 16px; }
+    .tiles { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 4px; }
+    .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+            padding: 10px 14px; min-width: 96px; }
+    .tile .k { font-size: 11px; color: var(--muted); text-transform: uppercase;
+               letter-spacing: .4px; }
+    .tile .v { font-size: 22px; font-weight: 600; font-family: var(--mono);
+               margin-top: 2px; }
+    .tile.hi .v { color: var(--diff); }
+
+    .filters { margin-bottom: 12px; display: flex; gap: 6px; align-items: center; }
+    .filters a { font-size: 12px; padding: 3px 10px; border: 1px solid var(--line);
+                 border-radius: 3px; color: var(--ink); background: #fff; }
+    .filters a.on { background: #26333f; color: #fff; border-color: #26333f; }
+
+    .statbar { display: flex; gap: 0; margin: 0 0 16px; border: 1px solid var(--line);
+               border-radius: 4px; overflow: hidden; background: var(--panel); width: fit-content; }
+    .statbar .stat { padding: 8px 16px; border-right: 1px solid var(--line-soft); min-width: 78px; }
+    .statbar .stat:last-child { border-right: none; }
+    .statbar .stat .n { font-size: 18px; font-weight: 600; font-family: var(--mono);
+                        font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .statbar .stat .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+    .statbar .stat.s-run .n { color: var(--run); }
+    .statbar .stat.s-diff .n { color: var(--diff); }
+    .statbar .stat.s-err .n { color: var(--err); }
+
+    .tablewrap { overflow-x: auto; }
+    .pair { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 46ch; }
+    .pair .op { font-family: var(--mono); font-size: 12px; white-space: nowrap;
+                overflow: hidden; text-overflow: ellipsis; }
+    .pair .op .arrow { margin-right: 3px; }
+
+    .env-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+               vertical-align: middle; margin-right: 8px; flex-shrink: 0; }
+    .env-ok { background: var(--ok); } .env-warn { background: var(--schema); } .env-off { background: var(--err); }
+    .env-row td { padding: 9px 12px; }
+    .env-row .lbl2 { font-weight: 600; }
+    .banner-note { background: #eef4fb; border: 1px solid #cfe0f2; color: #2b4a68;
+                   padding: 10px 14px; border-radius: 4px; font-size: 12.5px; line-height: 1.55;
+                   margin-bottom: 16px; }
+    .banner-note code { background: #dceaf7; border-color: #bcd6ef; }
+    .actions { display: flex; gap: 8px; align-items: center; }
+    .btn.danger { color: #b02a4a; }
+    .btn.danger:hover { background: #fff0f3; border-color: #f2b8c6; }
+    a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible,
+    select:focus-visible, tr:focus-visible {
+        outline: 2px solid var(--side-active); outline-offset: 1px; }
+
+    form.diffform label { display: block; font-weight: 600; margin: 12px 0 4px;
+                          font-size: 12px; }
+    form.diffform .hint { font-weight: 400; color: var(--muted); font-size: 11px; }
+    form.diffform input[type=text], form.diffform textarea, form.diffform select {
+        width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 3px;
+        font-family: var(--mono); font-size: 13px; background: #fff; }
+    form.diffform textarea { min-height: 54px; resize: vertical; }
+    form.diffform .row2 { display: flex; gap: 14px; }
+    form.diffform .row2 > div { flex: 1; }
+    form.diffform .checks { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; }
+    form.diffform .checks label { display: inline-flex; align-items: center; gap: 6px;
+                                  font-weight: 400; margin: 0; }
+    form.diffform .checks input { margin: 0; }
+    .modes { display: flex; gap: 0; margin: 4px 0 2px; }
+    .modes label { flex: 1; text-align: center; border: 1px solid var(--line);
+                   margin: 0 !important; padding: 8px; cursor: pointer; font-weight: 600;
+                   background: #fff; }
+    .modes label:not(:last-child) { border-right: none; }
+    .modes input { display: none; }
+    .modes label.sel { background: #26333f; color: #fff; border-color: #26333f; }
+    .err { background: #fff0f3; border: 1px solid #f2b8c6; color: #a61e4d;
+           padding: 9px 12px; border-radius: 4px; margin-bottom: 12px; font-size: 13px; }
+    .empty { color: var(--muted); padding: 30px; text-align: center; background: var(--panel);
+             border: 1px dashed var(--line); border-radius: 4px; }
+    .old { color: var(--diff); } .new { color: var(--ok); }
+    .chg { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .chg > span { margin-right: 7px; }
+    .c-add { color: var(--ok); font-weight: 600; }
+    .c-rem { color: var(--diff); font-weight: 600; }
+    .c-chg { color: #b06a00; font-weight: 600; }
+    .arrow { color: var(--muted); }
+    .kv { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand">lake&#8209;<b>sift</b></span>
+    <span class="ver">{{ version }}</span>
+    <span class="spacer"></span>
+    <span class="tag">value-level data diff · Parquet · Iceberg · Delta</span>
+    <button class="help-btn" type="button" onclick="lsHelp(true)" aria-haspopup="dialog">? Help</button>
+  </div>
+
+  <div class="modal" id="ls-help" hidden>
+    <div class="modal-backdrop" onclick="lsHelp(false)"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ls-help-title">
+      <div class="modal-head">
+        <h2 id="ls-help-title">lake&#8209;sift · Help</h2>
+        <button class="modal-x" type="button" onclick="lsHelp(false)" aria-label="Close help">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="lead">Compare two datasets down to the cell — no Spark, no warehouse.
+          This UI wraps the <code>lake-sift</code> CLI and keeps a history of every run.</p>
+
+        <div class="help-sec">
+          <h3>Modes</h3>
+          <dl class="help-def">
+            <dt>Value diff</dt><dd>Added, removed, and changed rows &amp; cells. Needs a <b>key</b>.</dd>
+            <dt>Schema only</dt><dd>Compare schemas only — no key, reads no data. A pre-run contract gate.</dd>
+            <dt>Preview</dt><dd>Estimate the blast radius from Iceberg metadata alone — reads no data.</dd>
+          </dl>
+        </div>
+
+        <div class="help-sec">
+          <h3>Source syntax</h3>
+          <div class="src-item"><code>path/to/*.parquet</code>
+            <div class="d">A Parquet file or glob.</div></div>
+          <div class="src-item"><code>iceberg:&lt;catalog&gt;/&lt;ns&gt;.&lt;table&gt;[@&lt;snap|ref&gt;[^]]</code>
+            <div class="d"><code>@1042</code> a snapshot · <code>@main</code> a branch/tag · <code>@^</code> that snapshot's parent.</div></div>
+          <div class="src-item"><code>delta:&lt;path&gt;[@&lt;version&gt;]</code>
+            <div class="d">A Delta table, with optional time-travel version.</div></div>
+          <div class="src-item"><code>sql:&lt;file.sql&gt;</code>
+            <div class="d">Predicted output schema (schema-only; provide the query's upstreams).</div></div>
+        </div>
+
+        <div class="help-sec">
+          <h3>Status</h3>
+          <div class="status-list">
+            <span><span class="badge st-ok">identical</span></span><span class="d">No difference at all.</span>
+            <span><span class="badge st-diff">differences</span></span><span class="d">Rows or cells changed.</span>
+            <span><span class="badge st-schema">schema change</span></span><span class="d">Columns added, removed, or retyped.</span>
+            <span><span class="badge st-running">running</span></span><span class="d">The diff is still in flight.</span>
+            <span><span class="badge st-error">error</span></span><span class="d">The comparison could not run.</span>
+          </div>
+        </div>
+
+        <div class="help-sec">
+          <h3>Where runs are stored</h3>
+          <p class="help-p">A SQLite file — default <code>~/.lake-sift/history.db</code>
+            (override with <code>lake-sift web --db &lt;path&gt;</code>). Only the diff <b>result</b> is saved,
+            with the row/cell listing capped; your Parquet, Iceberg, and Delta data is never copied.</p>
+        </div>
+
+        <div class="help-sec">
+          <h3>From the CLI</h3>
+          <p class="help-p"><code>lake-sift &lt;left&gt; &lt;right&gt; --key &lt;id&gt;</code> runs the exact same engine.
+            <a href="https://github.com/JeonDaehong/lake-sift" target="_blank" rel="noopener">Docs on GitHub &rarr;</a></p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="layout">
+    <nav class="side">
+      <div class="grp">Runs</div>
+      <a href="/runs" class="{{ 'active' if active == 'runs' else '' }}">All runs</a>
+      <a href="/runs?kind=diff">Diffs</a>
+      <a href="/runs?kind=schema">Schema checks</a>
+      <a href="/runs?kind=preview">Previews</a>
+      <div class="grp">New</div>
+      <a href="/runs/new" class="{{ 'active' if active == 'new' else '' }}">New diff</a>
+      <div class="grp">Setup</div>
+      <a href="/environment" class="{{ 'active' if active == 'env' else '' }}">Connections</a>
+    </nav>
+    <main class="main">
+      {% block body %}{% endblock %}
+    </main>
+  </div>
+  <script>
+    function lsHelp(show) {
+      var m = document.getElementById("ls-help");
+      if (m) m.hidden = !show;
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") lsHelp(false);
+    });
+  </script>
+</body>
+</html>

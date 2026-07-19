@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}New diff · lake-sift{% endblock %}
+{% block head %}
+<script>
+  function syncModes() {
+    var checked = document.querySelector('input[name=mode]:checked');
+    document.querySelectorAll('.modes label').forEach(function (l) {
+      l.classList.toggle('sel', l.querySelector('input').checked);
+    });
+    var m = checked ? checked.value : 'diff';
+    document.querySelectorAll('[data-when]').forEach(function (el) {
+      el.style.display = (el.getAttribute('data-when').split(',').indexOf(m) >= 0) ? '' : 'none';
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('input[name=mode]').forEach(function (r) {
+      r.addEventListener('change', syncModes);
+    });
+    syncModes();
+  });
+</script>
+{% endblock %}
+{% block body %}
+  {% set p = prefill %}
+  {% set mode = (p.mode if p and p.mode else 'diff') %}
+  <div class="crumb"><a href="/runs">Runs</a> / New</div>
+  <h1>New diff</h1>
+
+  <p class="kv" style="margin:-8px 0 14px;max-width:760px;line-height:1.6">
+    Sources: a Parquet path or glob · <code>iceberg:&lt;catalog&gt;/&lt;ns&gt;.&lt;table&gt;[@&lt;snapshot|ref&gt;[^]]</code>
+    · <code>delta:&lt;path&gt;[@&lt;version&gt;]</code>. Pin an immutable point (snapshot id / version) on each side for a reproducible diff.
+  </p>
+
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+  <form class="diffform" method="post" action="/runs" style="max-width:760px">
+    <div class="panel">
+      <label>Mode</label>
+      <div class="modes">
+        <label class="{{ 'sel' if mode == 'diff' else '' }}">
+          <input type="radio" name="mode" value="diff" {{ 'checked' if mode == 'diff' else '' }}> Value diff</label>
+        <label class="{{ 'sel' if mode == 'schema' else '' }}">
+          <input type="radio" name="mode" value="schema" {{ 'checked' if mode == 'schema' else '' }}> Schema only</label>
+        <label class="{{ 'sel' if mode == 'preview' else '' }}">
+          <input type="radio" name="mode" value="preview" {{ 'checked' if mode == 'preview' else '' }}> Preview</label>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label>Left <span class="hint">(before)</span></label>
+          <input type="text" name="left" value="{{ p.left if p else '' }}"
+                 placeholder="data/before.parquet  ·  iceberg:cat/ns.tbl@1042  ·  delta:path@3">
+        </div>
+        <div>
+          <label>Right <span class="hint">(after)</span></label>
+          <input type="text" name="right" value="{{ p.right if p else '' }}"
+                 placeholder="data/after.parquet  ·  iceberg:cat/ns.tbl@main">
+        </div>
+      </div>
+
+      <div data-when="diff">
+        <label>Key <span class="hint">— row identity, comma-separated (required for a value diff)</span></label>
+        <input type="text" name="key" value="{{ p.key | csv if p else '' }}" placeholder="id  ·  order_id, line_no">
+      </div>
+
+      <div class="row2" data-when="diff">
+        <div>
+          <label>Columns <span class="hint">— compare only these</span></label>
+          <input type="text" name="columns" value="{{ p.columns | csv if p else '' }}" placeholder="(all)">
+        </div>
+        <div>
+          <label>Exclude <span class="hint">— skip these</span></label>
+          <input type="text" name="exclude" value="{{ p.exclude | csv if p else '' }}" placeholder="(none)">
+        </div>
+      </div>
+
+      <div data-when="diff">
+        <label>Numeric tolerance <span class="hint">— equal when abs(l-r) &le; tol</span></label>
+        <input type="text" name="tolerance" value="{{ p.tolerance if p and p.tolerance is not none else '' }}" placeholder="(exact)">
+        <div class="checks">
+          <label><input type="checkbox" name="ignore_case" {{ 'checked' if p and p.ignore_case else '' }}> Ignore case (text)</label>
+          <label><input type="checkbox" name="allow_duplicates" {{ 'checked' if p and p.allow_duplicates else '' }}> Allow duplicate keys</label>
+        </div>
+      </div>
+
+      <div data-when="schema">
+        <div class="checks">
+          <label><input type="checkbox" name="structural_only" {{ 'checked' if p and p.structural_only else '' }}> Structural only (ignore type changes)</label>
+        </div>
+      </div>
+
+      <div data-when="schema,preview">
+        <label>Key <span class="hint">— optional; a preview uses it for the key-range proofs</span></label>
+        <input type="text" name="key" value="{{ p.key | csv if p else '' }}" placeholder="(optional)">
+      </div>
+
+      <div data-when="schema">
+        <label>Upstreams for a <code>sql:</code> source <span class="hint">— one NAME=SOURCE per line</span></label>
+        <textarea name="upstreams" placeholder="orders=data/orders.parquet">{{ p.upstreams | lines if p else '' }}</textarea>
+        <label>SQL dialect</label>
+        <input type="text" name="sql_dialect" value="{{ p.sql_dialect if p and p.sql_dialect else 'duckdb' }}">
+      </div>
+
+      <div style="margin-top:16px">
+        <button class="btn" type="submit">Run</button>
+        <a class="btn ghost" href="/runs">Cancel</a>
+      </div>
+    </div>
+  </form>
+{% endblock %}

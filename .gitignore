@@ -30,3 +30,6 @@ sandbox/
 .DS_Store
 .idea/
 .vscode/
+
+# capability/limitation one-pager (local reference, not public)
+capabilities.html

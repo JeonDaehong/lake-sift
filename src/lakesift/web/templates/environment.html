@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Connections · lake-sift{% endblock %}
+{% block body %}
+  <h1>Connections &amp; environment</h1>
+
+  <div class="banner-note">
+    Read-only. lake-sift never stores credentials — it inherits them from this server's
+    environment. Configure Iceberg catalogs in <code>~/.pyiceberg.yaml</code>, and object-store
+    (S3) access through the standard AWS environment (<code>AWS_*</code> vars, a shared profile,
+    or an instance role). This page shows only <b>what is set</b>, never any secret value.
+  </div>
+
+  <h2>Source adapters</h2>
+  <table class="grid" style="max-width:620px">
+    <tbody>
+      {% for a in env.adapters %}
+      <tr class="env-row">
+        <td style="width:230px"><span class="env-dot env-{{ a.status }}"></span><span class="lbl2">{{ a.label }}</span></td>
+        <td class="kv">{{ a.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Object storage (S3 · remote Parquet)</h2>
+  <table class="grid" style="max-width:620px">
+    <tbody>
+      {% for s in env.storage %}
+      <tr class="env-row">
+        <td style="width:230px"><span class="env-dot env-{{ s.status }}"></span><span class="lbl2">{{ s.label }}</span></td>
+        <td class="kv">{{ s.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Iceberg catalogs</h2>
+  {% if env.iceberg.catalogs %}
+    <table class="grid" style="max-width:720px">
+      <thead><tr><th>Name</th><th>Type</th><th>URI / warehouse</th></tr></thead>
+      <tbody>
+        {% for c in env.iceberg.catalogs %}
+        <tr>
+          <td class="mono"><span class="env-dot env-ok"></span>{{ c.name }}</td>
+          <td>{{ c.type }}</td>
+          <td class="mono kv">{{ c.uri or c.warehouse or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if env.iceberg.config_path %}
+      <p class="kv" style="margin-top:8px">from <code>{{ env.iceberg.config_path }}</code></p>
+    {% endif %}
+  {% else %}
+    <div class="empty">
+      {{ env.iceberg.note or 'No Iceberg catalogs configured.' }}
+    </div>
+  {% endif %}
+
+  <h2>Server</h2>
+  <table class="grid" style="max-width:620px">
+    <tbody>
+      <tr class="env-row"><td style="width:230px"><span class="lbl2">Version</span></td><td class="mono kv">lake-sift {{ env.version }}</td></tr>
+      <tr class="env-row"><td><span class="lbl2">Run history (SQLite)</span></td><td class="mono kv">{{ env.history_db }}</td></tr>
+    </tbody>
+  </table>
+{% endblock %}

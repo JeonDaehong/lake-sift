@@ -24,7 +24,11 @@ from lakesift.sources.iceberg import IcebergSource
 from lakesift.sources.parquet import ParquetSource
 from lakesift.sources.sql import SqlSchemaSource
 
-app = typer.Typer(add_completion=False, help="Diff two datasets at the cell level (Parquet · Iceberg · Delta).")
+app = typer.Typer(
+    add_completion=False,
+    help="Diff two datasets at the cell level (Parquet · Iceberg · Delta).",
+    epilog="Run `lake-sift web` to launch the web UI (needs `pip install lake-sift[web]`).",
+)
 
 _ICEBERG_PREFIX = "iceberg:"
 _DELTA_PREFIX = "delta:"
@@ -297,5 +301,19 @@ def main(
     raise typer.Exit(code=0 if empty else 1)
 
 
-if __name__ == "__main__":  # pragma: no cover
+def main_entry() -> None:
+    """Console entry point. Dispatches `lake-sift web ...` to the web server and leaves
+    every other invocation to the Typer diff app, so `lake-sift <left> <right>` is
+    unchanged. Kept out of the Typer app itself because the web UI is an optional extra
+    (`lake-sift[web]`) that must not be imported for a plain diff."""
+    argv = sys.argv[1:]
+    if argv and argv[0] == "web":
+        from lakesift.web.server import run as run_web
+
+        run_web(argv[1:])
+        return
     app()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main_entry()

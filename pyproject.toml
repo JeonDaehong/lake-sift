@@ -28,10 +28,21 @@ dependencies = [
 iceberg = ["pyiceberg>=0.7"]
 delta = ["deltalake>=0.17"]
 sql = ["sqlglot>=25"]
-dev = ["pytest>=8", "pyiceberg[sql-sqlite]>=0.7", "deltalake>=0.17", "sqlglot>=25"]
+web = ["fastapi>=0.110", "uvicorn>=0.29", "jinja2>=3.1", "python-multipart>=0.0.9"]
+dev = [
+    "pytest>=8",
+    "pyiceberg[sql-sqlite]>=0.7",
+    "deltalake>=0.17",
+    "sqlglot>=25",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+]
 
 [project.scripts]
-lake-sift = "lakesift.cli:app"
+lake-sift = "lakesift.cli:main_entry"
 
 [project.urls]
 Homepage = "https://github.com/JeonDaehong/lake-sift"

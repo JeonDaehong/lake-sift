@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Runs · lake-sift{% endblock %}
+{% set running = runs | selectattr('status', 'equalto', 'running') | list | length %}
+{% block head %}
+  {# Auto-refresh the list while a run is in flight, so it lands on the badge without a manual reload. #}
+  {% if running %}<meta http-equiv="refresh" content="4">{% endif %}
+{% endblock %}
+{% block body %}
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    <h1 style="margin-bottom:6px">
+      {% if kind %}{{ kind_label(kind) }} runs{% else %}All runs{% endif %}
+    </h1>
+    <a class="btn" href="/runs/new">New diff</a>
+  </div>
+
+  <div class="statbar">
+    <div class="stat"><div class="n">{{ counts.values() | sum }}</div><div class="l">Runs</div></div>
+    <div class="stat s-run"><div class="n">{{ counts.get('running', 0) }}</div><div class="l">Running</div></div>
+    <div class="stat"><div class="n">{{ counts.get('identical', 0) }}</div><div class="l">Identical</div></div>
+    <div class="stat s-diff"><div class="n">{{ counts.get('differences', 0) + counts.get('schema', 0) }}</div><div class="l">Differences</div></div>
+    <div class="stat s-err"><div class="n">{{ counts.get('error', 0) }}</div><div class="l">Errors</div></div>
+  </div>
+
+  <div class="filters">
+    <a href="/runs" class="{{ 'on' if not kind else '' }}">All</a>
+    <a href="/runs?kind=diff" class="{{ 'on' if kind == 'diff' else '' }}">Diff</a>
+    <a href="/runs?kind=schema" class="{{ 'on' if kind == 'schema' else '' }}">Schema</a>
+    <a href="/runs?kind=preview" class="{{ 'on' if kind == 'preview' else '' }}">Preview</a>
+  </div>
+
+  {% if not runs %}
+    <div class="empty">
+      {% if kind %}No {{ kind_label(kind) | lower }} runs yet.{% else %}No runs yet.{% endif %}
+      <a href="/runs/new">Start a diff</a> to compare two datasets.
+    </div>
+  {% else %}
+  <div class="tablewrap">
+  <table class="grid">
+    <thead>
+      <tr>
+        <th style="width:52px">#</th>
+        <th style="width:118px">Status</th>
+        <th style="width:66px">Kind</th>
+        <th>Left &rarr; Right</th>
+        <th style="width:110px">Key</th>
+        <th style="width:150px">Changes</th>
+        <th style="width:74px">Source</th>
+        <th style="width:64px" class="num">Time</th>
+        <th style="width:74px">When</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr onclick="location='/runs/{{ r.id }}'" style="cursor:pointer">
+        <td class="mono"><a href="/runs/{{ r.id }}">#{{ r.id }}</a></td>
+        <td style="white-space:nowrap">
+          <span class="badge {{ status_class(r.status) }}">{{ status_label(r.status) }}</span>
+        </td>
+        <td>{{ kind_label(r.kind) }}</td>
+        <td>
+          <div class="pair">
+            <span class="op" title="{{ r.left }}">{{ r.left }}</span>
+            <span class="op" title="{{ r.right }}"><span class="arrow">&rarr;</span>{{ r.right }}</span>
+          </div>
+        </td>
+        <td class="mono">{{ r.key or '—' }}</td>
+        <td>{{ changes_cell(r) }}</td>
+        <td><span class="pill">{{ r.source_kind }}</span></td>
+        <td class="num">{{ r.duration_ms | dur }}</td>
+        <td class="kv" title="{{ r.created_at | when }}">{{ r.created_at | ago }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+{% endblock %}
+
+{% macro changes_cell(r) %}
+  {%- set s = r.summary or {} -%}
+  {%- if r.status in ('running', 'error') -%}
+    <span class="kv">—</span>
+  {%- elif r.kind == 'diff' -%}
+    {%- if r.status == 'identical' -%}
+      <span class="kv">no change</span>
+    {%- else -%}
+      <span class="chg" style="white-space:nowrap">
+        <span class="c-add">{{ s.get('added', 0) }}+</span>
+        <span class="c-rem">{{ s.get('removed', 0) }}-</span>
+        <span class="c-chg">{{ s.get('changed_cells', 0) }}~</span>
+      </span>
+    {%- endif -%}
+  {%- elif r.kind == 'schema' -%}
+    {%- set n = s.get('schema_changes', 0) -%}
+    {%- if n -%}<span class="c-chg">{{ n }} column change{{ 's' if n != 1 else '' }}</span>
+    {%- else -%}<span class="kv">no change</span>{%- endif -%}
+  {%- elif r.kind == 'preview' -%}
+    {%- if r.status == 'identical' -%}<span class="kv">identical</span>
+    {%- else -%}<span class="kv" style="white-space:nowrap">{{ s.get('files_differing', 0) }} files ·
+      {{ '{:,}'.format(s.get('rows_to_scan', 0)) }} rows</span>{%- endif -%}
+  {%- else -%}<span class="kv">—</span>{%- endif -%}
+{% endmacro %}
