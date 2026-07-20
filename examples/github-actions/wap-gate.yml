@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Diff staging against main
-        uses: JeonDaehong/lake-sift@v0.5.0
+        uses: JeonDaehong/lake-sift@v0
         with:
           left: "iceberg:prod/sales.orders@main"
           right: "iceberg:prod/sales.orders@staging"

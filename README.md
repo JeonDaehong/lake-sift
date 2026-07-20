@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/lake-sift.svg)](https://pypi.org/project/lake-sift/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/JeonDaehong/lake-sift/actions/workflows/ci.yml/badge.svg)](https://github.com/JeonDaehong/lake-sift/actions/workflows/ci.yml)
+[![Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-lake--sift-blue?logo=github)](https://github.com/marketplace/actions/lake-sift-data-diff)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 
 **Value-level data diff for the lakehouse era.**
@@ -23,6 +24,21 @@ $ lake-sift a.parquet b.parquet --key id
 
 It is a library with a thin CLI on top, so the same diff powers both an
 interactive review and a CI gate (via exit codes).
+
+**Use it in CI** straight from the
+[GitHub Marketplace](https://github.com/marketplace/actions/lake-sift-data-diff):
+
+```yaml
+- uses: JeonDaehong/lake-sift@v0
+  with:
+    left: "iceberg:prod/sales.orders@main"
+    right: "iceberg:prod/sales.orders@staging"
+    key: order_id
+    extras: iceberg
+    fail-on-diff: "true"   # block the PR when the data differs
+```
+
+See [GitHub Action](#github-action) below for the full input list.
 
 ## Why lake-sift
 
@@ -165,7 +181,7 @@ it as a sticky PR comment, and fails the check when the data differs. Copy a
 workflow from [`examples/github-actions/`](examples/github-actions):
 
 ```yaml
-- uses: JeonDaehong/lake-sift@v0.5.0
+- uses: JeonDaehong/lake-sift@v0
   with:
     left: "iceberg:prod/sales.orders@main"
     right: "iceberg:prod/sales.orders@staging"
@@ -506,7 +522,7 @@ check when the datasets differ — turning any of the diffs above into a merge g
   with:
     python-version: "3.12"
 
-- uses: JeonDaehong/lake-sift@v0.5.0
+- uses: JeonDaehong/lake-sift@v0
   with:
     left: "iceberg:prod/sales.orders@main"
     right: "iceberg:prod/sales.orders@staging"   # audit the WAP staging branch
@@ -525,6 +541,10 @@ Outputs: `diff` (`true`/`false`), `exit-code`, `report` (path to the Markdown fi
 Lakehouse credentials are supplied by your workflow's `env`/`secrets` — the action
 only invokes lake-sift. Full examples live in
 [`examples/github-actions/`](examples/github-actions).
+
+**Versioning.** `@v0` is a moving tag that always points at the latest `0.x`
+release — convenient, and safe while the API is pre-1.0. Pin an exact release
+(`@v0.6.0`) if you'd rather opt into upgrades deliberately.
 
 ### Python API
 
